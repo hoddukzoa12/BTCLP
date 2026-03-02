@@ -123,30 +123,25 @@ fn test_fork_pragma_get_data_with_aggregation() {
 fn test_fork_ekubo_core_pool_price() {
     let core = IEkuboCoreDispatcher { contract_address: EKUBO_CORE() };
 
-    // Construct wBTC/USDC pool key
-    // Fee tier: 0.3% = 170141183460469235273462165868118016 (Ekubo's 128.128 format)
-    // Tick spacing: 200
+    // Construct wBTC/USDC pool key matching real mainnet pool
+    // Fee tier: 0.05% = 170141183460469235273462165868118016 (0.0005 * 2^128)
+    // Tick spacing: 1000 (matches mainnet wBTC/USDC 0.05% pool)
+    // Extension: 0x0 (no extension)
     let pool_key = PoolKey {
         token0: WBTC(),
         token1: USDC(),
         fee: 170141183460469235273462165868118016,
-        tick_spacing: 200,
+        tick_spacing: 1000,
         extension: 0.try_into().unwrap(),
     };
 
-    // Query pool price — if pool exists, sqrt_ratio > 0
+    // Query pool price — pool exists on mainnet, sqrt_ratio should be > 0
     let pool_price = core.get_pool_price(pool_key);
 
-    // sqrt_ratio == 0 means pool doesn't exist with these exact params,
-    // which is still a valid ABI response (no revert = interface matches)
-    // If pool exists, verify it has meaningful data
-    if pool_price.sqrt_ratio > 0 {
-        // Pool exists — great, our interface is compatible
-        // tick magnitude should be reasonable (< 2^127)
-        assert(pool_price.tick.mag < 170141183460469231731687303715884105728, 'tick too large');
-    }
-    // If sqrt_ratio == 0, the pool may not exist with this exact fee/spacing,
-    // but the call succeeded without revert — ABI is compatible ✓
+    // This pool exists on mainnet — verify we get real data
+    assert(pool_price.sqrt_ratio > 0, 'pool should exist');
+    // tick magnitude should be reasonable (< 2^127)
+    assert(pool_price.tick.mag < 170141183460469231731687303715884105728, 'tick too large');
 }
 
 #[test]
@@ -154,17 +149,18 @@ fn test_fork_ekubo_core_pool_price() {
 fn test_fork_ekubo_core_pool_liquidity() {
     let core = IEkuboCoreDispatcher { contract_address: EKUBO_CORE() };
 
+    // Same pool key as test_fork_ekubo_core_pool_price
     let pool_key = PoolKey {
         token0: WBTC(),
         token1: USDC(),
-        fee: 170141183460469235273462165868118016,
-        tick_spacing: 200,
+        fee: 170141183460469235273462165868118016, // 0.05%
+        tick_spacing: 1000,
         extension: 0.try_into().unwrap(),
     };
 
-    // Query total liquidity — should not revert
-    let _liquidity = core.get_pool_liquidity(pool_key);
-    // Successful call = ABI compatible ✓
+    // Query total liquidity — pool exists, should return > 0
+    let liquidity = core.get_pool_liquidity(pool_key);
+    assert(liquidity > 0, 'pool should have liquidity');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -176,22 +172,21 @@ fn test_fork_ekubo_core_pool_liquidity() {
 fn test_fork_ekubo_positions_get_pool_price() {
     let positions = IEkuboPositionsDispatcher { contract_address: EKUBO_POSITIONS() };
 
+    // Same pool key as core tests
     let pool_key = PoolKey {
         token0: WBTC(),
         token1: USDC(),
-        fee: 170141183460469235273462165868118016,
-        tick_spacing: 200,
+        fee: 170141183460469235273462165868118016, // 0.05%
+        tick_spacing: 1000,
         extension: 0.try_into().unwrap(),
     };
 
     // Query pool price through Positions contract
     let pool_price = positions.get_pool_price(pool_key);
 
-    // Same as core — if pool exists, sqrt_ratio > 0
-    if pool_price.sqrt_ratio > 0 {
-        assert(pool_price.tick.mag < 170141183460469231731687303715884105728, 'tick too large');
-    }
-    // No revert = Positions interface is ABI-compatible ✓
+    // Pool exists — verify real data via Positions interface
+    assert(pool_price.sqrt_ratio > 0, 'pool should exist');
+    assert(pool_price.tick.mag < 170141183460469231731687303715884105728, 'tick too large');
 }
 
 // ══════════════════════════════════════════════════════════════
