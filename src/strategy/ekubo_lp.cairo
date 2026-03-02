@@ -184,31 +184,37 @@ pub mod EkuboLPStrategy {
             let (_amount0, _amount1) = positions_disp
                 .withdraw(current_nft, pool_key, bounds, liq_to_remove, 0, 0, true);
 
-            // Transfer withdrawn tokens back to vault
+            // Transfer only token0 (wBTC) back to vault.
+            // token1 (USDC) stays in strategy — vault is wBTC-only and cannot
+            // account for USDC. Retained token1 can be swapped or redeployed
+            // via a separate keeper/governance path.
             let vault = self.vault_addr.read();
             let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
-            let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
             let bal0 = token0_disp.balance_of(get_contract_address());
-            let bal1 = token1_disp.balance_of(get_contract_address());
             if bal0 > 0 {
                 token0_disp.transfer(vault, bal0);
-            }
-            if bal1 > 0 {
-                token1_disp.transfer(vault, bal1);
             }
 
             self.emit(Withdrawn { amount });
         }
 
-        /// Total assets — token0 + token1 + all fees, denominated in token0.
-        /// Includes both tokens and fees to prevent stranding capital during
-        /// rebalance when the LP position is mostly token1 (out-of-range).
-        /// Note: token1 is included at 1:1 nominal value; for precise accounting,
-        /// an oracle conversion (token1→token0) should be applied by the caller.
+        /// Total assets denominated in the vault's asset (wBTC = token0).
+        /// Only returns token0 position + token0 fees + any free token0 balance
+        /// held by this strategy contract (e.g. retained after withdraw).
+        /// token1 (USDC) is NOT included because the vault is wBTC-only —
+        /// including it would inflate the accounting and cause the Manager to
+        /// attempt withdrawing more wBTC than actually exists.
+        /// Use `underlying_balance()` and `pending_fees()` to see all tokens.
         fn total_assets(self: @ContractState) -> u256 {
             let current_nft = self.nft_id.read();
+            let token0_disp = IERC20Dispatcher {
+                contract_address: self.token0.read(),
+            };
+            // Free wBTC sitting in strategy (retained from partial withdraws etc.)
+            let free_balance: u256 = token0_disp.balance_of(get_contract_address());
+
             if current_nft == 0 {
-                return 0;
+                return free_balance;
             }
 
             let positions_disp = IEkuboPositionsDispatcher {
@@ -219,12 +225,10 @@ pub mod EkuboLPStrategy {
             let info: GetTokenInfoResult = positions_disp
                 .get_token_info(current_nft, pool_key, bounds);
 
-            // Include all tokens: amount0 + amount1 + fees0 + fees1
-            // This ensures rebalance withdraws full position value
+            // token0 in position + token0 fees + free token0 balance
             let total: u256 = info.amount0.into()
-                + info.amount1.into()
                 + info.fees0.into()
-                + info.fees1.into();
+                + free_balance;
             total
         }
 
@@ -282,17 +286,12 @@ pub mod EkuboLPStrategy {
             positions_disp
                 .withdraw(current_nft, pool_key, bounds, liq_to_remove, min_token0, min_token1, true);
 
-            // Transfer to vault
+            // Transfer only token0 (wBTC) to vault; retain token1 (USDC) in strategy
             let vault = self.vault_addr.read();
             let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
-            let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
             let bal0 = token0_disp.balance_of(get_contract_address());
-            let bal1 = token1_disp.balance_of(get_contract_address());
             if bal0 > 0 {
                 token0_disp.transfer(vault, bal0);
-            }
-            if bal1 > 0 {
-                token1_disp.transfer(vault, bal1);
             }
         }
 

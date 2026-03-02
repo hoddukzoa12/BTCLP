@@ -294,13 +294,17 @@ pub mod BTCFiManager {
             response.price.into()
         }
 
-        /// Escape: pull all assets from Ekubo → transfer wBTC to Vesu strategy → deposit.
+        /// Escape: pull all wBTC from Ekubo → transfer to Vesu strategy → deposit.
+        ///
+        /// Uses before/after balance snapshot so only the **withdrawn** wBTC
+        /// is forwarded — the vault's existing buffer is left untouched.
         ///
         /// Flow:
-        ///   1. Ekubo.withdraw(total) → tokens land in vault
-        ///   2. Read vault's actual wBTC balance
-        ///   3. Vault transfers wBTC to Vesu strategy (via vault.transfer_to_strategy)
-        ///   4. Vesu.deposit(actual_balance) — strategy checks its own balance
+        ///   1. Snapshot vault wBTC balance (before)
+        ///   2. Ekubo.withdraw(total) → wBTC lands in vault
+        ///   3. Snapshot vault wBTC balance (after)
+        ///   4. delta = after − before  (only the withdrawn amount)
+        ///   5. Vault transfers delta to Vesu strategy → Vesu.deposit(delta)
         fn _escape_to_vesu(ref self: ContractState) {
             let ekubo_disp = IStrategyDispatcher {
                 contract_address: self.ekubo_strategy.read(),
@@ -310,40 +314,40 @@ pub mod BTCFiManager {
                 contract_address: vesu_strategy_addr,
             };
 
-            // Step 1: Get total assets in Ekubo
             let ekubo_assets = ekubo_disp.total_assets();
             if ekubo_assets == 0 {
                 return;
             }
 
-            // Step 2: Withdraw all from Ekubo (tokens go to vault)
-            ekubo_disp.withdraw(ekubo_assets);
-
-            // Step 3: Read vault's actual wBTC balance (may differ from ekubo_assets
-            // because Ekubo returns mixed token0+token1, and only token0=wBTC goes to vault)
             let asset_addr = self.asset_token.read();
             let vault_addr = self.vault.read();
             let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
-            let actual_wbtc = asset_disp.balance_of(vault_addr);
-            if actual_wbtc == 0 {
+
+            // Snapshot vault wBTC balance BEFORE withdraw
+            let balance_before = asset_disp.balance_of(vault_addr);
+
+            // Withdraw from Ekubo (only wBTC goes to vault; USDC stays in strategy)
+            ekubo_disp.withdraw(ekubo_assets);
+
+            // Snapshot vault wBTC balance AFTER withdraw
+            let balance_after = asset_disp.balance_of(vault_addr);
+            let delta = balance_after - balance_before;
+            if delta == 0 {
                 return;
             }
 
-            // Step 4: Transfer wBTC from vault to Vesu strategy
+            // Transfer only the withdrawn wBTC to Vesu strategy (preserves vault buffer)
             let vault_disp = IBTCFiVaultDispatcher { contract_address: vault_addr };
-            vault_disp.transfer_to_strategy(vesu_strategy_addr, actual_wbtc);
+            vault_disp.transfer_to_strategy(vesu_strategy_addr, delta);
 
-            // Step 5: Deposit into Vesu (strategy checks its own balance)
-            vesu_disp.deposit(actual_wbtc);
+            // Deposit into Vesu
+            vesu_disp.deposit(delta);
         }
 
-        /// Return: pull all assets from Vesu → transfer wBTC to Ekubo strategy → deposit.
+        /// Return: pull all wBTC from Vesu → transfer to Ekubo strategy → deposit.
         ///
-        /// Flow:
-        ///   1. Vesu.withdraw(total) → tokens land in vault
-        ///   2. Read vault's actual wBTC balance
-        ///   3. Vault transfers wBTC to Ekubo strategy
-        ///   4. Ekubo.deposit(actual_balance) — strategy checks its own balance
+        /// Uses before/after balance snapshot so only the **withdrawn** wBTC
+        /// is forwarded — the vault's existing buffer is left untouched.
         fn _return_to_ekubo(ref self: ContractState) {
             let ekubo_strategy_addr = self.ekubo_strategy.read();
             let ekubo_disp = IStrategyDispatcher {
@@ -353,30 +357,34 @@ pub mod BTCFiManager {
                 contract_address: self.vesu_strategy.read(),
             };
 
-            // Step 1: Get total assets in Vesu
             let vesu_assets = vesu_disp.total_assets();
             if vesu_assets == 0 {
                 return;
             }
 
-            // Step 2: Withdraw all from Vesu (tokens go to vault)
-            vesu_disp.withdraw(vesu_assets);
-
-            // Step 3: Read vault's actual wBTC balance
             let asset_addr = self.asset_token.read();
             let vault_addr = self.vault.read();
             let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
-            let actual_wbtc = asset_disp.balance_of(vault_addr);
-            if actual_wbtc == 0 {
+
+            // Snapshot vault wBTC balance BEFORE withdraw
+            let balance_before = asset_disp.balance_of(vault_addr);
+
+            // Withdraw from Vesu (wBTC goes to vault)
+            vesu_disp.withdraw(vesu_assets);
+
+            // Snapshot vault wBTC balance AFTER withdraw
+            let balance_after = asset_disp.balance_of(vault_addr);
+            let delta = balance_after - balance_before;
+            if delta == 0 {
                 return;
             }
 
-            // Step 4: Transfer wBTC from vault to Ekubo strategy
+            // Transfer only the withdrawn wBTC to Ekubo strategy (preserves vault buffer)
             let vault_disp = IBTCFiVaultDispatcher { contract_address: vault_addr };
-            vault_disp.transfer_to_strategy(ekubo_strategy_addr, actual_wbtc);
+            vault_disp.transfer_to_strategy(ekubo_strategy_addr, delta);
 
-            // Step 5: Deposit into Ekubo (strategy checks its own balance)
-            ekubo_disp.deposit(actual_wbtc);
+            // Deposit into Ekubo
+            ekubo_disp.deposit(delta);
         }
 
         fn _assert_keeper_or_owner(self: @ContractState) {
