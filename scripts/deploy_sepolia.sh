@@ -28,11 +28,26 @@ export PATH="$HOME/.asdf/shims:$HOME/.local/bin:$PATH"
 
 # ── Configuration ──
 NETWORK="sepolia"
-ACCOUNT="deployer"
+ACCOUNT="${SNCAST_ACCOUNT:-deployer}"
 ZERO_ADDR="0x0"
 
-# Deployer address (owner of all contracts)
-OWNER="0x00f08dea4d30852afcdfb27306cef969d9fcc1322b2abd9bd702f3c0becc7ad1"
+# Derive OWNER from sncast account file (no hardcoded address)
+ACCOUNTS_FILE="${HOME}/.starknet_accounts/starknet_open_zeppelin_accounts.json"
+if [ ! -f "$ACCOUNTS_FILE" ]; then
+    echo "ERROR: accounts file not found at $ACCOUNTS_FILE"
+    echo "Run: sncast account create --name $ACCOUNT --network sepolia"
+    exit 1
+fi
+OWNER=$(python3 -c "
+import json, sys
+with open('$ACCOUNTS_FILE') as f:
+    data = json.load(f)
+addr = data.get('alpha-sepolia', {}).get('$ACCOUNT', {}).get('address', '')
+if not addr:
+    print('ERROR: account $ACCOUNT not found', file=sys.stderr); sys.exit(1)
+print('0x' + addr.lstrip('0x').zfill(64))
+")
+echo "  Deployer (OWNER): $OWNER"
 
 # BTC price: $65,000 with 8 decimals
 INITIAL_BTC_PRICE="6500000000000"
