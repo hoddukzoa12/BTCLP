@@ -14,7 +14,7 @@ alexandria_math = { git = "https://github.com/keep-starknet-strange/alexandria.g
 # EkuboProtocol/starknet-contracts does not expose a lib target for Scarb
 
 [dev-dependencies]
-snforge_std = "0.57.0"
+snforge_std = "0.52.0"
 cairo_test = "2.14.0"
 
 [[target.starknet-contract]]

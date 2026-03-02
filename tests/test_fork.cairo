@@ -7,13 +7,11 @@
 /// - Prove mainnet readiness to hackathon judges
 /// - Validate integration against live protocol state
 ///
-/// ⚠ NOTE: These tests are currently #[ignore] because snforge 0.57.0
-/// requires RPC spec v0.10.0 but no free public RPC supports it yet
-/// (Lava=v0.8.1, Cartridge=v0.9.0). The "Preconfirmed block" panic
-/// is a known incompatibility. Tests will work once public RPCs catch up
-/// or snforge relaxes version requirements.
+/// NOTE: Requires snforge 0.52.0 (not 0.57.0) because the fork feature
+/// in >=0.53.0 requires RPC spec v0.10.0 which no public RPC supports yet.
+/// snforge 0.52.0 expects v0.9.0 but works fine with Alchemy v0.8.1.
 ///
-/// Run with: snforge test test_fork --ignored
+/// Run with: snforge test test_fork
 ///
 /// Closes #23
 
@@ -75,7 +73,6 @@ const BTC_USD_PAIR_ID: felt252 = 18669995996566340;
 
 #[test]
 #[fork("MAINNET_FORK")]
-#[ignore]
 fn test_fork_pragma_btc_usd_price() {
     let oracle = IPragmaABIDispatcher { contract_address: PRAGMA_ORACLE() };
 
@@ -104,7 +101,6 @@ fn test_fork_pragma_btc_usd_price() {
 
 #[test]
 #[fork("MAINNET_FORK")]
-#[ignore]
 fn test_fork_pragma_get_data_with_aggregation() {
     let oracle = IPragmaABIDispatcher { contract_address: PRAGMA_ORACLE() };
 
@@ -124,7 +120,6 @@ fn test_fork_pragma_get_data_with_aggregation() {
 
 #[test]
 #[fork("MAINNET_FORK")]
-#[ignore]
 fn test_fork_ekubo_core_pool_price() {
     let core = IEkuboCoreDispatcher { contract_address: EKUBO_CORE() };
 
@@ -156,7 +151,6 @@ fn test_fork_ekubo_core_pool_price() {
 
 #[test]
 #[fork("MAINNET_FORK")]
-#[ignore]
 fn test_fork_ekubo_core_pool_liquidity() {
     let core = IEkuboCoreDispatcher { contract_address: EKUBO_CORE() };
 
@@ -179,7 +173,6 @@ fn test_fork_ekubo_core_pool_liquidity() {
 
 #[test]
 #[fork("MAINNET_FORK")]
-#[ignore]
 fn test_fork_ekubo_positions_get_pool_price() {
     let positions = IEkuboPositionsDispatcher { contract_address: EKUBO_POSITIONS() };
 
@@ -216,7 +209,6 @@ trait IERC20View<TContractState> {
 
 #[test]
 #[fork("MAINNET_FORK")]
-#[ignore]
 fn test_fork_wbtc_token_metadata() {
     let wbtc = IERC20ViewDispatcher { contract_address: WBTC() };
 
@@ -229,7 +221,6 @@ fn test_fork_wbtc_token_metadata() {
 
 #[test]
 #[fork("MAINNET_FORK")]
-#[ignore]
 fn test_fork_usdc_token_metadata() {
     let usdc = IERC20ViewDispatcher { contract_address: USDC() };
 
