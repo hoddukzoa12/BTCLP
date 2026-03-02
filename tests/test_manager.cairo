@@ -1,6 +1,7 @@
 use snforge_std::{
     declare, ContractClassTrait, DeclareResultTrait,
     start_cheat_caller_address, stop_cheat_caller_address,
+    store,
 };
 use starknet::ContractAddress;
 
@@ -126,6 +127,15 @@ fn deploy_full_system(
     lower_price.serialize(ref manager_calldata);
     upper_price.serialize(ref manager_calldata);
     let (manager_addr, _) = manager_class.deploy(@manager_calldata).unwrap();
+
+    // Patch strategy vault_addr (deployed with ZERO, now set to real vault)
+    let vault_slot = selector!("vault_addr");
+    store(ekubo_addr, vault_slot, array![vault_addr.into()].span());
+    store(vesu_addr, vault_slot, array![vault_addr.into()].span());
+
+    // Patch vault manager_addr (deployed with OWNER, now set to real manager)
+    let manager_slot = selector!("manager_addr");
+    store(vault_addr, manager_slot, array![manager_addr.into()].span());
 
     // Wire: set manager on strategies
     start_cheat_caller_address(ekubo_addr, OWNER());
