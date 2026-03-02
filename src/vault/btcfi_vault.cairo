@@ -15,6 +15,7 @@ pub mod BTCFiVault {
     // Strategy interface for cross-contract calls (total_assets, withdraw)
     use super::super::super::strategy::traits::{
         IStrategyDispatcher, IStrategyDispatcherTrait,
+        IEkuboLPStrategyExtDispatcher, IEkuboLPStrategyExtDispatcherTrait,
     };
 
     // ── Component wiring ──
@@ -391,13 +392,19 @@ pub mod BTCFiVault {
                 }
             }
 
-            // Pull all assets from Ekubo back to vault buffer
+            // Pull all assets from Ekubo back to vault buffer.
+            // Uses IEkuboLPStrategyExt.withdraw_liquidity(100%) instead of
+            // IStrategy.withdraw(total_assets) because total_assets only counts
+            // token0 (wBTC). A token1-only position (price above range) has
+            // total_assets==0 but still holds liquidity that must be unwound.
             let ekubo_addr = self.ekubo_strategy_addr.read();
             if ekubo_addr != zero {
-                let ekubo_disp = IStrategyDispatcher { contract_address: ekubo_addr };
-                let ekubo_assets = ekubo_disp.total_assets();
-                if ekubo_assets > 0 {
-                    ekubo_disp.withdraw(ekubo_assets);
+                let ekubo_ext = IEkuboLPStrategyExtDispatcher {
+                    contract_address: ekubo_addr,
+                };
+                if ekubo_ext.total_liquidity() > 0 {
+                    // 1e18 = 100% of liquidity
+                    ekubo_ext.withdraw_liquidity(1000000000000000000, 0, 0);
                 }
             }
 
