@@ -4,5 +4,5 @@
 [sncast.sepolia]
 account = "deployer"
 network = "sepolia"
-url = "https://starknet-sepolia.public.blastapi.io/rpc/v0_7"
+url = "https://rpc.starknet-testnet.lava.build:443/rpc/v0_7"
 wait = true
