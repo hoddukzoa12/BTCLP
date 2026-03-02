@@ -160,6 +160,32 @@ pub mod BTCFiVault {
             shares
         }
 
+        /// Mint exact shares amount, pulling proportional assets from caller.
+        /// ERC-4626: round UP assets to pull (in favor of vault).
+        fn mint(ref self: ContractState, shares: u256, receiver: ContractAddress) -> u256 {
+            self._assert_not_paused();
+            assert(shares > 0, 'ZERO_SHARES');
+
+            let assets = self._convert_to_assets_round_up(shares);
+            assert(assets > 0, 'ZERO_ASSETS');
+
+            let caller = get_caller_address();
+
+            // Transfer wBTC from caller to vault (round up = vault-favorable)
+            let asset_dispatcher = IERC20Dispatcher {
+                contract_address: self.asset_token.read(),
+            };
+            let success = asset_dispatcher.transfer_from(caller, get_contract_address(), assets);
+            assert(success, 'TRANSFER_FROM_FAILED');
+
+            // Mint shares to receiver
+            self.erc20.mint(receiver, shares);
+
+            self.emit(Deposit { sender: caller, owner: receiver, assets, shares });
+
+            assets
+        }
+
         /// Withdraw exact assets amount, burning proportional shares.
         /// ERC-4626: round UP shares to burn (in favor of vault).
         fn withdraw(
@@ -200,6 +226,7 @@ pub mod BTCFiVault {
         }
 
         /// Redeem exact shares amount, returning proportional assets.
+        /// Does NOT revert when assets rounds to zero — burns dust shares gracefully.
         fn redeem(
             ref self: ContractState,
             shares: u256,
@@ -210,7 +237,6 @@ pub mod BTCFiVault {
             assert(shares > 0, 'ZERO_SHARES');
 
             let assets = self._convert_to_assets(shares);
-            assert(assets > 0, 'ZERO_ASSETS');
 
             let caller = get_caller_address();
 
@@ -218,15 +244,19 @@ pub mod BTCFiVault {
                 self.erc20._spend_allowance(owner, caller, shares);
             }
 
-            self._ensure_liquidity(assets);
-
+            // Burn shares from owner (even if assets == 0, dust shares are cleaned up)
             self.erc20.burn(owner, shares);
 
-            let asset_dispatcher = IERC20Dispatcher {
-                contract_address: self.asset_token.read(),
-            };
-            let success = asset_dispatcher.transfer(receiver, assets);
-            assert(success, 'TRANSFER_FAILED');
+            // Only transfer and ensure liquidity if there are assets to send
+            if assets > 0 {
+                self._ensure_liquidity(assets);
+
+                let asset_dispatcher = IERC20Dispatcher {
+                    contract_address: self.asset_token.read(),
+                };
+                let success = asset_dispatcher.transfer(receiver, assets);
+                assert(success, 'TRANSFER_FAILED');
+            }
 
             self.emit(Withdraw { sender: caller, receiver, owner, assets, shares });
 
@@ -269,6 +299,14 @@ pub mod BTCFiVault {
             }
         }
 
+        fn max_mint(self: @ContractState, receiver: ContractAddress) -> u256 {
+            if self.paused.read() {
+                0
+            } else {
+                MAX_U256
+            }
+        }
+
         fn max_withdraw(self: @ContractState, owner: ContractAddress) -> u256 {
             if self.paused.read() {
                 0
@@ -287,6 +325,10 @@ pub mod BTCFiVault {
 
         fn preview_deposit(self: @ContractState, assets: u256) -> u256 {
             self._convert_to_shares(assets)
+        }
+
+        fn preview_mint(self: @ContractState, shares: u256) -> u256 {
+            self._convert_to_assets_round_up(shares)
         }
 
         fn preview_withdraw(self: @ContractState, assets: u256) -> u256 {
@@ -400,6 +442,15 @@ pub mod BTCFiVault {
             let supply = self.erc20.total_supply();
             let total = self._total_assets_internal();
             (shares * (total + 1)) / (supply + 1)
+        }
+
+        /// Convert shares → assets, rounding UP (used by mint — vault-favorable)
+        /// ceil(a * b / c) = (a * b + c - 1) / c, with virtual offset
+        fn _convert_to_assets_round_up(self: @ContractState, shares: u256) -> u256 {
+            let supply = self.erc20.total_supply();
+            let total = self._total_assets_internal();
+            let denominator = supply + 1;
+            (shares * (total + 1) + denominator - 1) / denominator
         }
 
         /// Internal total_assets (avoids trait dispatch overhead)
