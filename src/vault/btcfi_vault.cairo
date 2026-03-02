@@ -161,6 +161,7 @@ pub mod BTCFiVault {
         }
 
         /// Withdraw exact assets amount, burning proportional shares.
+        /// ERC-4626: round UP shares to burn (in favor of vault).
         fn withdraw(
             ref self: ContractState,
             assets: u256,
@@ -170,7 +171,7 @@ pub mod BTCFiVault {
             self._assert_not_paused();
             assert(assets > 0, 'ZERO_ASSETS');
 
-            let shares = self._convert_to_shares(assets);
+            let shares = self._convert_to_shares_round_up(assets);
             assert(shares > 0, 'ZERO_SHARES');
 
             let caller = get_caller_address();
@@ -289,7 +290,7 @@ pub mod BTCFiVault {
         }
 
         fn preview_withdraw(self: @ContractState, assets: u256) -> u256 {
-            self._convert_to_shares(assets)
+            self._convert_to_shares_round_up(assets)
         }
 
         fn preview_redeem(self: @ContractState, shares: u256) -> u256 {
@@ -367,7 +368,7 @@ pub mod BTCFiVault {
     // ── Internal Helpers ──
     #[generate_trait]
     impl InternalImpl of InternalTrait {
-        /// Convert assets → shares (1:1 if no shares exist yet, otherwise proportional)
+        /// Convert assets → shares, rounding DOWN (used by deposit — vault-favorable)
         fn _convert_to_shares(self: @ContractState, assets: u256) -> u256 {
             let supply = self.erc20.total_supply();
             if supply == 0 {
@@ -382,7 +383,23 @@ pub mod BTCFiVault {
             }
         }
 
-        /// Convert shares → assets
+        /// Convert assets → shares, rounding UP (used by withdraw — vault-favorable)
+        /// ceil(a * b / c) = (a * b + c - 1) / c
+        fn _convert_to_shares_round_up(self: @ContractState, assets: u256) -> u256 {
+            let supply = self.erc20.total_supply();
+            if supply == 0 {
+                assets
+            } else {
+                let total = self._total_assets_internal();
+                if total == 0 {
+                    assets
+                } else {
+                    (assets * supply + total - 1) / total
+                }
+            }
+        }
+
+        /// Convert shares → assets, rounding DOWN (used by redeem — vault-favorable)
         fn _convert_to_assets(self: @ContractState, shares: u256) -> u256 {
             let supply = self.erc20.total_supply();
             if supply == 0 {
