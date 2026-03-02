@@ -66,6 +66,7 @@ pub mod EkuboLPStrategy {
         #[substorage(v0)]
         ownable: OwnableComponent::Storage,
         vault_addr: ContractAddress,
+        manager_addr: ContractAddress,
         ekubo_positions: ContractAddress,
         ekubo_core: ContractAddress,
         token0: ContractAddress,          // wBTC
@@ -83,6 +84,7 @@ pub mod EkuboLPStrategy {
     fn constructor(
         ref self: ContractState,
         vault: ContractAddress,
+        manager: ContractAddress,
         owner: ContractAddress,
         ekubo_positions: ContractAddress,
         ekubo_core: ContractAddress,
@@ -94,6 +96,7 @@ pub mod EkuboLPStrategy {
     ) {
         self.ownable.initializer(owner);
         self.vault_addr.write(vault);
+        self.manager_addr.write(manager);
         self.ekubo_positions.write(ekubo_positions);
         self.ekubo_core.write(ekubo_core);
         self.token0.write(token0);
@@ -113,14 +116,19 @@ pub mod EkuboLPStrategy {
         /// For simplicity, deposits token0 (wBTC) only; the Positions
         /// contract handles single-sided deposit to concentrated range.
         fn deposit(ref self: ContractState, amount: u256) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             assert(amount > 0, 'ZERO_AMOUNT');
 
             let token0_addr = self.token0.read();
             let positions_addr = self.ekubo_positions.read();
+            let token0_disp = IERC20Dispatcher { contract_address: token0_addr };
+
+            // Pull funds from vault into strategy (vault must have approved strategy)
+            let vault = self.vault_addr.read();
+            let success = token0_disp.transfer_from(vault, get_contract_address(), amount);
+            assert(success, 'TRANSFER_FROM_VAULT_FAILED');
 
             // Approve Positions contract to spend token0
-            let token0_disp = IERC20Dispatcher { contract_address: token0_addr };
             token0_disp.approve(positions_addr, amount);
 
             let pool_key = self._pool_key();
@@ -144,7 +152,7 @@ pub mod EkuboLPStrategy {
         /// Withdraw assets (wBTC amount) from Ekubo LP position.
         /// Withdraws proportional liquidity to cover the requested amount.
         fn withdraw(ref self: ContractState, amount: u256) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             assert(amount > 0, 'ZERO_AMOUNT');
 
             let current_nft = self.nft_id.read();
@@ -193,8 +201,11 @@ pub mod EkuboLPStrategy {
             self.emit(Withdrawn { amount });
         }
 
-        /// Total assets (token0 + token1 value in terms of token0).
-        /// Simplified: returns token0 amount only (token1 not converted).
+        /// Total assets — token0 + token1 + all fees, denominated in token0.
+        /// Includes both tokens and fees to prevent stranding capital during
+        /// rebalance when the LP position is mostly token1 (out-of-range).
+        /// Note: token1 is included at 1:1 nominal value; for precise accounting,
+        /// an oracle conversion (token1→token0) should be applied by the caller.
         fn total_assets(self: @ContractState) -> u256 {
             let current_nft = self.nft_id.read();
             if current_nft == 0 {
@@ -209,9 +220,12 @@ pub mod EkuboLPStrategy {
             let info: GetTokenInfoResult = positions_disp
                 .get_token_info(current_nft, pool_key, bounds);
 
-            // Return token0 (wBTC) amount + fees as total assets
-            // TODO: Convert token1 to token0 equivalent via oracle for accurate accounting
-            let total: u256 = info.amount0.into() + info.fees0.into();
+            // Include all tokens: amount0 + amount1 + fees0 + fees1
+            // This ensures rebalance withdraws full position value
+            let total: u256 = info.amount0.into()
+                + info.amount1.into()
+                + info.fees0.into()
+                + info.fees1.into();
             total
         }
 
@@ -224,7 +238,7 @@ pub mod EkuboLPStrategy {
     #[abi(embed_v0)]
     impl EkuboLPStrategyExtImpl of super::super::traits::IEkuboLPStrategyExt<ContractState> {
         fn deposit_liquidity(ref self: ContractState, amount0: u256, amount1: u256) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             let positions_addr = self.ekubo_positions.read();
 
             // Approve both tokens
@@ -250,7 +264,7 @@ pub mod EkuboLPStrategy {
         fn withdraw_liquidity(
             ref self: ContractState, ratio_wad: u256, min_token0: u128, min_token1: u128,
         ) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             let current_nft = self.nft_id.read();
             assert(current_nft != 0, 'NO_POSITION');
 
@@ -284,7 +298,7 @@ pub mod EkuboLPStrategy {
         }
 
         fn collect_fees(ref self: ContractState) -> (u128, u128) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             let current_nft = self.nft_id.read();
             assert(current_nft != 0, 'NO_POSITION');
 
@@ -396,9 +410,11 @@ pub mod EkuboLPStrategy {
             }
         }
 
-        fn _assert_vault_only(self: @ContractState) {
+        fn _assert_vault_or_manager(self: @ContractState) {
             let caller = get_caller_address();
-            assert(caller == self.vault_addr.read(), 'ONLY_VAULT');
+            let vault = self.vault_addr.read();
+            let manager = self.manager_addr.read();
+            assert(caller == vault || caller == manager, 'ONLY_VAULT_OR_MANAGER');
         }
     }
 }

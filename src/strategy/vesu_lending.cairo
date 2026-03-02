@@ -57,6 +57,7 @@ pub mod VesuLendingStrategy {
         #[substorage(v0)]
         ownable: OwnableComponent::Storage,
         vault_addr: ContractAddress,
+        manager_addr: ContractAddress,
         vesu_pool: ContractAddress,
         pool_id: felt252,
         asset: ContractAddress,    // wBTC — collateral asset
@@ -67,6 +68,7 @@ pub mod VesuLendingStrategy {
     fn constructor(
         ref self: ContractState,
         vault: ContractAddress,
+        manager: ContractAddress,
         owner: ContractAddress,
         vesu_pool: ContractAddress,
         pool_id: felt252,
@@ -74,6 +76,7 @@ pub mod VesuLendingStrategy {
     ) {
         self.ownable.initializer(owner);
         self.vault_addr.write(vault);
+        self.manager_addr.write(manager);
         self.vesu_pool.write(vesu_pool);
         self.pool_id.write(pool_id);
         self.asset.write(asset);
@@ -84,14 +87,19 @@ pub mod VesuLendingStrategy {
     impl StrategyImpl of super::super::traits::IStrategy<ContractState> {
         /// Deploy assets (wBTC) into Vesu lending pool as collateral.
         fn deposit(ref self: ContractState, amount: u256) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             assert(amount > 0, 'ZERO_AMOUNT');
 
             let asset_addr = self.asset.read();
             let pool_addr = self.vesu_pool.read();
+            let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
+
+            // Pull funds from vault into strategy (vault must have approved strategy)
+            let vault = self.vault_addr.read();
+            let success = asset_disp.transfer_from(vault, get_contract_address(), amount);
+            assert(success, 'TRANSFER_FROM_VAULT_FAILED');
 
             // Approve pool to spend asset
-            let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
             asset_disp.approve(pool_addr, amount);
 
             // Supply collateral via modify_position (positive collateral, zero debt)
@@ -121,7 +129,7 @@ pub mod VesuLendingStrategy {
 
         /// Withdraw assets (wBTC) from Vesu lending pool.
         fn withdraw(ref self: ContractState, amount: u256) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             assert(amount > 0, 'ZERO_AMOUNT');
 
             let asset_addr = self.asset.read();
@@ -188,13 +196,13 @@ pub mod VesuLendingStrategy {
         ContractState,
     > {
         fn supply(ref self: ContractState, amount: u256) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             // Delegate to IStrategy::deposit
             StrategyImpl::deposit(ref self, amount);
         }
 
         fn withdraw_collateral(ref self: ContractState, amount: u256) {
-            self._assert_vault_only();
+            self._assert_vault_or_manager();
             // Delegate to IStrategy::withdraw
             StrategyImpl::withdraw(ref self, amount);
         }
@@ -218,9 +226,11 @@ pub mod VesuLendingStrategy {
     // ── Internal Helpers ──
     #[generate_trait]
     impl InternalImpl of InternalTrait {
-        fn _assert_vault_only(self: @ContractState) {
+        fn _assert_vault_or_manager(self: @ContractState) {
             let caller = get_caller_address();
-            assert(caller == self.vault_addr.read(), 'ONLY_VAULT');
+            let vault = self.vault_addr.read();
+            let manager = self.manager_addr.read();
+            assert(caller == vault || caller == manager, 'ONLY_VAULT_OR_MANAGER');
         }
     }
 }
