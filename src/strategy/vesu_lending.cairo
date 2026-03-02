@@ -127,36 +127,58 @@ pub mod VesuLendingStrategy {
         }
 
         /// Withdraw assets (wBTC) from Vesu lending pool.
+        ///
+        /// `amount` may include idle wBTC sitting on this contract (from rounding
+        /// dust or direct transfers).  We only ask the Vesu pool to withdraw up to
+        /// the on-pool collateral so we never request more than is deposited.
+        /// Any idle balance is automatically included in the final vault transfer.
         fn withdraw(ref self: ContractState, amount: u256) {
             self._assert_vault_or_manager();
             assert(amount > 0, 'ZERO_AMOUNT');
 
             let asset_addr = self.asset.read();
             let pool_addr = self.vesu_pool.read();
-
-            // Withdraw collateral via modify_position (negative collateral, zero debt)
             let pool_disp = IVesuPoolDispatcher { contract_address: pool_addr };
-            let collateral_amount = Amount {
-                denomination: AmountDenomination::Assets,
-                value: I257Impl::new(amount, true),
-            };
-            let zero_debt = Amount {
-                denomination: AmountDenomination::Assets,
-                value: I257Impl::new(0, false),
+
+            // Query on-pool collateral to cap the withdrawal amount
+            let (position, _cv, _dv) = pool_disp
+                .position(asset_addr, zero_address(), get_contract_address());
+            let collateral_shares_i257 = I257Impl::new(
+                position.collateral_shares, false,
+            );
+            let on_pool_collateral = pool_disp
+                .calculate_collateral(asset_addr, collateral_shares_i257);
+
+            // Only withdraw from pool if there is collateral to withdraw
+            let pool_withdraw = if amount <= on_pool_collateral {
+                amount
+            } else {
+                on_pool_collateral
             };
 
-            pool_disp
-                .modify_position(
-                    ModifyPositionParams {
-                        collateral_asset: asset_addr,
-                        debt_asset: zero_address(),
-                        user: get_contract_address(),
-                        collateral: collateral_amount,
-                        debt: zero_debt,
-                    },
-                );
+            if pool_withdraw > 0 {
+                let collateral_amount = Amount {
+                    denomination: AmountDenomination::Assets,
+                    value: I257Impl::new(pool_withdraw, true),
+                };
+                let zero_debt = Amount {
+                    denomination: AmountDenomination::Assets,
+                    value: I257Impl::new(0, false),
+                };
 
-            // Transfer withdrawn assets to vault
+                pool_disp
+                    .modify_position(
+                        ModifyPositionParams {
+                            collateral_asset: asset_addr,
+                            debt_asset: zero_address(),
+                            user: get_contract_address(),
+                            collateral: collateral_amount,
+                            debt: zero_debt,
+                        },
+                    );
+            }
+
+            // Transfer all available wBTC (pool-withdrawn + idle) to vault
             let vault = self.vault_addr.read();
             let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
             let bal = asset_disp.balance_of(get_contract_address());
