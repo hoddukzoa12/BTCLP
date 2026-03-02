@@ -366,48 +366,40 @@ pub mod BTCFiVault {
     }
 
     // ── Internal Helpers ──
+    //
+    // Virtual offset (+1) is applied to both supply and total_assets in all
+    // conversion math.  This follows the OZ ERC-4626 pattern and makes the
+    // classic donation / inflation attack economically infeasible: an attacker
+    // who donates `d` tokens only captures `d / (d + 1)` of the next deposit's
+    // value, which is always less than `d` — a net loss for the attacker.
+
     #[generate_trait]
     impl InternalImpl of InternalTrait {
         /// Convert assets → shares, rounding DOWN (used by deposit — vault-favorable)
+        /// Uses virtual offset: shares = assets * (supply + 1) / (total + 1)
         fn _convert_to_shares(self: @ContractState, assets: u256) -> u256 {
             let supply = self.erc20.total_supply();
-            if supply == 0 {
-                assets // 1:1 when vault is empty
-            } else {
-                let total = self._total_assets_internal();
-                if total == 0 {
-                    assets
-                } else {
-                    (assets * supply) / total
-                }
-            }
+            let total = self._total_assets_internal();
+            // Virtual offset: +1 to both numerator and denominator
+            // When supply == 0: (assets * 1) / (0 + 1) = assets  (1:1)
+            (assets * (supply + 1)) / (total + 1)
         }
 
         /// Convert assets → shares, rounding UP (used by withdraw — vault-favorable)
-        /// ceil(a * b / c) = (a * b + c - 1) / c
+        /// ceil(a * b / c) = (a * b + c - 1) / c, with virtual offset
         fn _convert_to_shares_round_up(self: @ContractState, assets: u256) -> u256 {
             let supply = self.erc20.total_supply();
-            if supply == 0 {
-                assets
-            } else {
-                let total = self._total_assets_internal();
-                if total == 0 {
-                    assets
-                } else {
-                    (assets * supply + total - 1) / total
-                }
-            }
+            let total = self._total_assets_internal();
+            let denominator = total + 1;
+            (assets * (supply + 1) + denominator - 1) / denominator
         }
 
         /// Convert shares → assets, rounding DOWN (used by redeem — vault-favorable)
+        /// Uses virtual offset: assets = shares * (total + 1) / (supply + 1)
         fn _convert_to_assets(self: @ContractState, shares: u256) -> u256 {
             let supply = self.erc20.total_supply();
-            if supply == 0 {
-                shares
-            } else {
-                let total = self._total_assets_internal();
-                (shares * total) / supply
-            }
+            let total = self._total_assets_internal();
+            (shares * (total + 1)) / (supply + 1)
         }
 
         /// Internal total_assets (avoids trait dispatch overhead)
