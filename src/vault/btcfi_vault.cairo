@@ -12,6 +12,11 @@ pub mod BTCFiVault {
     use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 
+    // Strategy interface for cross-contract calls (total_assets, withdraw)
+    use super::super::super::strategy::traits::{
+        IStrategyDispatcher, IStrategyDispatcherTrait,
+    };
+
     // ── Component wiring ──
     component!(path: ERC20Component, storage: erc20, event: ERC20Event);
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
@@ -271,16 +276,10 @@ pub mod BTCFiVault {
             self.asset_token.read()
         }
 
-        /// Total assets = buffer (vault balance) + ekubo strategy + vesu strategy
+        /// Total assets = buffer (vault balance) + ekubo strategy + vesu strategy.
+        /// This is the canonical AUM used for ERC-4626 share pricing.
         fn total_assets(self: @ContractState) -> u256 {
-            let buffer = self._buffer_balance();
-            // TODO: When strategies are implemented, call total_assets() on each
-            // let ekubo_assets = IStrategyDispatcher { contract_address:
-            // self.ekubo_strategy_addr.read() }.total_assets();
-            // let vesu_assets = IStrategyDispatcher { contract_address:
-            // self.vesu_strategy_addr.read() }.total_assets();
-            // buffer + ekubo_assets + vesu_assets
-            buffer
+            self._total_assets_internal()
         }
 
         fn convert_to_shares(self: @ContractState, assets: u256) -> u256 {
@@ -474,10 +473,29 @@ pub mod BTCFiVault {
             (shares * (total + 1) + denominator - 1) / denominator
         }
 
-        /// Internal total_assets (avoids trait dispatch overhead)
+        /// Internal total_assets = buffer + ekubo + vesu strategy balances.
+        /// Used by all ERC-4626 conversion math for accurate share pricing.
         fn _total_assets_internal(self: @ContractState) -> u256 {
-            // Buffer only for now; strategies added later
-            self._buffer_balance()
+            let buffer = self._buffer_balance();
+
+            let ekubo_addr = self.ekubo_strategy_addr.read();
+            let vesu_addr = self.vesu_strategy_addr.read();
+
+            let zero: ContractAddress = 0.try_into().unwrap();
+
+            let ekubo_assets = if ekubo_addr != zero {
+                IStrategyDispatcher { contract_address: ekubo_addr }.total_assets()
+            } else {
+                0
+            };
+
+            let vesu_assets = if vesu_addr != zero {
+                IStrategyDispatcher { contract_address: vesu_addr }.total_assets()
+            } else {
+                0
+            };
+
+            buffer + ekubo_assets + vesu_assets
         }
 
         /// Get vault's wBTC balance (liquid buffer)
@@ -490,14 +508,53 @@ pub mod BTCFiVault {
 
         /// Ensure vault has enough liquid wBTC for withdrawal.
         /// If buffer is insufficient, pull from strategies.
+        /// Priority 1: Vesu (instant redemption, no IL)
+        /// Priority 2: Ekubo (may have impermanent loss)
         fn _ensure_liquidity(ref self: ContractState, needed: u256) {
-            let buffer = self._buffer_balance();
+            let mut buffer = self._buffer_balance();
             if buffer >= needed {
                 return;
             }
-            // TODO: Pull from strategies when implemented
-            // Priority 1: Vesu (instant, no IL)
-            // Priority 2: Ekubo (may have IL)
+
+            let shortfall = needed - buffer;
+            let zero: ContractAddress = 0.try_into().unwrap();
+
+            // Priority 1: Pull from Vesu (instant, no IL)
+            let vesu_addr = self.vesu_strategy_addr.read();
+            if vesu_addr != zero {
+                let vesu_disp = IStrategyDispatcher { contract_address: vesu_addr };
+                let vesu_available = vesu_disp.total_assets();
+                if vesu_available > 0 {
+                    let pull_amount = if shortfall <= vesu_available {
+                        shortfall
+                    } else {
+                        vesu_available
+                    };
+                    vesu_disp.withdraw(pull_amount);
+                    buffer = self._buffer_balance();
+                    if buffer >= needed {
+                        return;
+                    }
+                }
+            }
+
+            // Priority 2: Pull from Ekubo (may have IL)
+            let ekubo_addr = self.ekubo_strategy_addr.read();
+            if ekubo_addr != zero {
+                let ekubo_disp = IStrategyDispatcher { contract_address: ekubo_addr };
+                let ekubo_available = ekubo_disp.total_assets();
+                if ekubo_available > 0 {
+                    let remaining = needed - buffer;
+                    let pull_amount = if remaining <= ekubo_available {
+                        remaining
+                    } else {
+                        ekubo_available
+                    };
+                    ekubo_disp.withdraw(pull_amount);
+                    buffer = self._buffer_balance();
+                }
+            }
+
             assert(buffer >= needed, 'INSUFFICIENT_LIQUIDITY');
         }
 

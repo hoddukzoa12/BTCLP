@@ -148,8 +148,11 @@ pub mod EkuboLPStrategy {
             self.emit(Deposited { amount });
         }
 
-        /// Withdraw assets (wBTC amount) from Ekubo LP position.
-        /// Withdraws proportional liquidity to cover the requested amount.
+        /// Withdraw wBTC (token0) from Ekubo LP position.
+        ///
+        /// Calculates proportional liquidity based on token0 (wBTC) only —
+        /// NOT the mixed token0+token1 sum (they are different denominations).
+        /// If `amount` exceeds available token0, withdraws all liquidity.
         fn withdraw(ref self: ContractState, amount: u256) {
             self._assert_vault_or_manager();
             assert(amount > 0, 'ZERO_AMOUNT');
@@ -163,22 +166,26 @@ pub mod EkuboLPStrategy {
             let pool_key = self._pool_key();
             let bounds = self._bounds();
 
-            // Get current position info to calculate liquidity to withdraw
             let info: GetTokenInfoResult = positions_disp
                 .get_token_info(current_nft, pool_key, bounds);
 
-            // Calculate proportional liquidity to withdraw
-            let total_value: u256 = info.amount0.into() + info.amount1.into();
-            assert(total_value > 0, 'EMPTY_POSITION');
-
-            // liquidity_to_remove = liquidity * amount / total_value
             let liq: u256 = info.liquidity.into();
-            let liq_to_remove_256: u256 = (liq * amount) / total_value;
-            // Clamp to u128
-            let liq_to_remove: u128 = if liq_to_remove_256 > info.liquidity.into() {
+            assert(liq > 0, 'EMPTY_POSITION');
+
+            // Calculate liquidity to remove based on token0 (wBTC) ratio only.
+            // amount is in wBTC units, so compare against token0 in the position.
+            let token0_in_position: u256 = info.amount0.into();
+            let liq_to_remove: u128 = if token0_in_position == 0 || amount >= token0_in_position {
+                // Position is fully token1 or requesting all token0 → remove all liquidity
                 info.liquidity
             } else {
-                liq_to_remove_256.try_into().unwrap()
+                // Proportional: liquidity * amount / token0_in_position
+                let liq_to_remove_256: u256 = (liq * amount) / token0_in_position;
+                if liq_to_remove_256 > liq {
+                    info.liquidity
+                } else {
+                    liq_to_remove_256.try_into().unwrap()
+                }
             };
 
             let (_amount0, _amount1) = positions_disp
