@@ -212,8 +212,11 @@ pub mod BTCFiManager {
                 VaultState::VesuLending => {
                     // Return: price re-entered LP range → move back to Ekubo
                     assert(price >= lower && price <= upper, 'PRICE_OUT_OF_RANGE');
-                    let moved = self._return_to_ekubo();
-                    assert(moved, 'NO_ASSETS_TO_RETURN');
+                    // Always transitions state. If token1-only escape left Vesu
+                    // empty, _return_to_ekubo is a no-op and that's OK — the
+                    // vault buffer (if any) remains available and the system
+                    // returns to EkuboActive for the next deposit cycle.
+                    self._return_to_ekubo();
                     self.current_state.write(VaultState::EkuboActive);
                     self.emit(StateChanged { from_state: 'VesuLending', to_state: 'EkuboActive' });
                 },
@@ -326,30 +329,35 @@ pub mod BTCFiManager {
                 contract_address: vesu_strategy_addr,
             };
 
-            // Withdraw 100% of Ekubo liquidity (ratio-based, handles token1-only).
-            // wBTC goes to vault, USDC stays in strategy.
-            let asset_addr = self.asset_token.read();
-            let vault_addr = self.vault.read();
-            let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
+            // Skip if no active Ekubo position (nft_id was cleared by prior withdraw)
+            let has_position = ekubo_ext.total_liquidity() > 0;
+            if has_position {
+                // Withdraw 100% of Ekubo liquidity (ratio-based, handles token1-only).
+                // wBTC goes to vault, USDC stays in strategy.
+                let asset_addr = self.asset_token.read();
+                let vault_addr = self.vault.read();
+                let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
 
-            // Snapshot vault wBTC balance BEFORE withdraw
-            let balance_before = asset_disp.balance_of(vault_addr);
+                // Snapshot vault wBTC balance BEFORE withdraw
+                let balance_before = asset_disp.balance_of(vault_addr);
 
-            // 1e18 = 100% of liquidity
-            ekubo_ext.withdraw_liquidity(1000000000000000000, 0, 0);
+                // 1e18 = 100% of liquidity
+                ekubo_ext.withdraw_liquidity(1000000000000000000, 0, 0);
 
-            // Snapshot vault wBTC balance AFTER withdraw
-            let balance_after = asset_disp.balance_of(vault_addr);
-            let delta = balance_after - balance_before;
+                // Snapshot vault wBTC balance AFTER withdraw
+                let balance_after = asset_disp.balance_of(vault_addr);
+                let delta = balance_after - balance_before;
 
-            // If wBTC was recovered, forward it to Vesu
-            if delta > 0 {
-                let vault_disp = IBTCFiVaultDispatcher { contract_address: vault_addr };
-                vault_disp.transfer_to_strategy(vesu_strategy_addr, delta);
-                vesu_disp.deposit(delta);
+                // If wBTC was recovered, forward it to Vesu
+                if delta > 0 {
+                    let vault_disp = IBTCFiVaultDispatcher { contract_address: vault_addr };
+                    vault_disp.transfer_to_strategy(vesu_strategy_addr, delta);
+                    vesu_disp.deposit(delta);
+                }
+                // If delta==0 (token1-only position), state still transitions.
+                // USDC is retained in Ekubo strategy for future sweep/swap.
             }
-            // If delta==0 (token1-only position), state still transitions — that's OK.
-            // USDC is retained in Ekubo strategy for future sweep/swap.
+            // If no position, nothing to withdraw — state still transitions.
         }
 
         /// Return: pull all wBTC from Vesu → transfer to Ekubo strategy → deposit.
@@ -357,7 +365,8 @@ pub mod BTCFiManager {
         /// Uses before/after balance snapshot so only the **withdrawn** wBTC
         /// is forwarded — the vault's existing buffer is left untouched.
         /// Withdraw all Vesu collateral and deposit recovered wBTC into Ekubo.
-        fn _return_to_ekubo(ref self: ContractState) -> bool {
+        /// If Vesu has no assets (e.g. after token1-only escape), this is a no-op.
+        fn _return_to_ekubo(ref self: ContractState) {
             let ekubo_strategy_addr = self.ekubo_strategy.read();
             let ekubo_disp = IStrategyDispatcher {
                 contract_address: ekubo_strategy_addr,
@@ -368,7 +377,7 @@ pub mod BTCFiManager {
 
             let vesu_assets = vesu_disp.total_assets();
             if vesu_assets == 0 {
-                return false;
+                return;
             }
 
             let asset_addr = self.asset_token.read();
@@ -385,7 +394,7 @@ pub mod BTCFiManager {
             let balance_after = asset_disp.balance_of(vault_addr);
             let delta = balance_after - balance_before;
             if delta == 0 {
-                return false;
+                return;
             }
 
             // Transfer only the withdrawn wBTC to Ekubo strategy (preserves vault buffer)
@@ -394,7 +403,6 @@ pub mod BTCFiManager {
 
             // Deposit into Ekubo
             ekubo_disp.deposit(delta);
-            true
         }
 
         fn _assert_keeper_or_owner(self: @ContractState) {
