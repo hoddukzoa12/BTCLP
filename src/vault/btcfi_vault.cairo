@@ -434,6 +434,39 @@ pub mod BTCFiVault {
         }
 
         // ────────────────────────────────────
+        //  Admin Setters (Owner only)
+        // ────────────────────────────────────
+
+        fn set_strategies(
+            ref self: ContractState,
+            ekubo_strategy: ContractAddress,
+            vesu_strategy: ContractAddress,
+        ) {
+            self.ownable.assert_only_owner();
+
+            // Migration guard: prevent rewiring while old strategies hold funds
+            let zero: ContractAddress = 0.try_into().unwrap();
+            let old_ekubo = self.ekubo_strategy_addr.read();
+            if old_ekubo != zero {
+                let old_assets = IStrategyDispatcher { contract_address: old_ekubo }.total_assets();
+                assert(old_assets == 0, 'EKUBO_HAS_FUNDS');
+            }
+            let old_vesu = self.vesu_strategy_addr.read();
+            if old_vesu != zero {
+                let old_assets = IStrategyDispatcher { contract_address: old_vesu }.total_assets();
+                assert(old_assets == 0, 'VESU_HAS_FUNDS');
+            }
+
+            self.ekubo_strategy_addr.write(ekubo_strategy);
+            self.vesu_strategy_addr.write(vesu_strategy);
+        }
+
+        fn set_manager_addr(ref self: ContractState, new_manager: ContractAddress) {
+            self.ownable.assert_only_owner();
+            self.manager_addr.write(new_manager);
+        }
+
+        // ────────────────────────────────────
         //  View
         // ────────────────────────────────────
 
