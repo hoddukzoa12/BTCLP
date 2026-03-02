@@ -1,14 +1,404 @@
 /// Ekubo LP Strategy — concentrated liquidity management
 /// Core Domain: deposit/withdraw liquidity, collect fees
+///
+/// Implements IStrategy (common vault interface) + IEkuboLPStrategyExt (protocol-specific).
+/// Uses vendored Ekubo interfaces from src/interfaces/ekubo.cairo.
+
 #[starknet::contract]
 pub mod EkuboLPStrategy {
-    use starknet::ContractAddress;
+    use openzeppelin::access::ownable::OwnableComponent;
+    use openzeppelin::interfaces::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use starknet::{ContractAddress, get_caller_address, get_contract_address};
+    use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 
+    // Ekubo vendored types
+    use super::super::super::interfaces::ekubo::{
+        IEkuboPositionsDispatcher, IEkuboPositionsDispatcherTrait,
+        PoolKey, Bounds, i129, GetTokenInfoResult,
+    };
+
+    // ── Component wiring ──
+    component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
+
+    #[abi(embed_v0)]
+    impl OwnableMixinImpl = OwnableComponent::OwnableMixinImpl<ContractState>;
+    impl OwnableInternalImpl = OwnableComponent::InternalImpl<ContractState>;
+
+    // ── Events ──
+    #[event]
+    #[derive(Drop, starknet::Event)]
+    pub enum Event {
+        #[flat]
+        OwnableEvent: OwnableComponent::Event,
+        Deposited: Deposited,
+        Withdrawn: Withdrawn,
+        FeesCollected: FeesCollected,
+        BoundsUpdated: BoundsUpdated,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct Deposited {
+        pub amount: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct Withdrawn {
+        pub amount: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct FeesCollected {
+        pub fees0: u128,
+        pub fees1: u128,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct BoundsUpdated {
+        pub lower_mag: u128,
+        pub lower_sign: bool,
+        pub upper_mag: u128,
+        pub upper_sign: bool,
+    }
+
+    // ── Storage ──
     #[storage]
     struct Storage {
-        vault: ContractAddress,
+        #[substorage(v0)]
+        ownable: OwnableComponent::Storage,
+        vault_addr: ContractAddress,
         ekubo_positions: ContractAddress,
         ekubo_core: ContractAddress,
+        token0: ContractAddress,          // wBTC
+        token1: ContractAddress,          // USDC
+        pool_fee: u128,
+        pool_tick_spacing: u128,
+        pool_extension: ContractAddress,
         nft_id: u64,
+        lower_bound: i129,
+        upper_bound: i129,
+    }
+
+    // ── Constructor ──
+    #[constructor]
+    fn constructor(
+        ref self: ContractState,
+        vault: ContractAddress,
+        owner: ContractAddress,
+        ekubo_positions: ContractAddress,
+        ekubo_core: ContractAddress,
+        token0: ContractAddress,
+        token1: ContractAddress,
+        pool_fee: u128,
+        pool_tick_spacing: u128,
+        pool_extension: ContractAddress,
+    ) {
+        self.ownable.initializer(owner);
+        self.vault_addr.write(vault);
+        self.ekubo_positions.write(ekubo_positions);
+        self.ekubo_core.write(ekubo_core);
+        self.token0.write(token0);
+        self.token1.write(token1);
+        self.pool_fee.write(pool_fee);
+        self.pool_tick_spacing.write(pool_tick_spacing);
+        self.pool_extension.write(pool_extension);
+        self.nft_id.write(0);
+        self.lower_bound.write(i129 { mag: 0, sign: false });
+        self.upper_bound.write(i129 { mag: 0, sign: false });
+    }
+
+    // ── IStrategy Implementation ──
+    #[abi(embed_v0)]
+    impl StrategyImpl of super::super::traits::IStrategy<ContractState> {
+        /// Deploy assets (wBTC amount) into Ekubo LP position.
+        /// For simplicity, deposits token0 (wBTC) only; the Positions
+        /// contract handles single-sided deposit to concentrated range.
+        fn deposit(ref self: ContractState, amount: u256) {
+            self._assert_vault_only();
+            assert(amount > 0, 'ZERO_AMOUNT');
+
+            let token0_addr = self.token0.read();
+            let positions_addr = self.ekubo_positions.read();
+
+            // Approve Positions contract to spend token0
+            let token0_disp = IERC20Dispatcher { contract_address: token0_addr };
+            token0_disp.approve(positions_addr, amount);
+
+            let pool_key = self._pool_key();
+            let bounds = self._bounds();
+            let positions_disp = IEkuboPositionsDispatcher { contract_address: positions_addr };
+
+            let current_nft = self.nft_id.read();
+            if current_nft == 0 {
+                // First deposit — mint NFT
+                let (new_nft_id, _liquidity) = positions_disp
+                    .mint_and_deposit(pool_key, bounds, 0); // min_liquidity = 0
+                self.nft_id.write(new_nft_id);
+            } else {
+                // Subsequent deposits — add to existing NFT
+                positions_disp.deposit(current_nft, pool_key, bounds, 0);
+            }
+
+            self.emit(Deposited { amount });
+        }
+
+        /// Withdraw assets (wBTC amount) from Ekubo LP position.
+        /// Withdraws proportional liquidity to cover the requested amount.
+        fn withdraw(ref self: ContractState, amount: u256) {
+            self._assert_vault_only();
+            assert(amount > 0, 'ZERO_AMOUNT');
+
+            let current_nft = self.nft_id.read();
+            assert(current_nft != 0, 'NO_POSITION');
+
+            let positions_disp = IEkuboPositionsDispatcher {
+                contract_address: self.ekubo_positions.read(),
+            };
+            let pool_key = self._pool_key();
+            let bounds = self._bounds();
+
+            // Get current position info to calculate liquidity to withdraw
+            let info: GetTokenInfoResult = positions_disp
+                .get_token_info(current_nft, pool_key, bounds);
+
+            // Calculate proportional liquidity to withdraw
+            let total_value: u256 = info.amount0.into() + info.amount1.into();
+            assert(total_value > 0, 'EMPTY_POSITION');
+
+            // liquidity_to_remove = liquidity * amount / total_value
+            let liq: u256 = info.liquidity.into();
+            let liq_to_remove_256: u256 = (liq * amount) / total_value;
+            // Clamp to u128
+            let liq_to_remove: u128 = if liq_to_remove_256 > info.liquidity.into() {
+                info.liquidity
+            } else {
+                liq_to_remove_256.try_into().unwrap()
+            };
+
+            let (_amount0, _amount1) = positions_disp
+                .withdraw(current_nft, pool_key, bounds, liq_to_remove, 0, 0, true);
+
+            // Transfer withdrawn tokens back to vault
+            let vault = self.vault_addr.read();
+            let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
+            let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
+            let bal0 = token0_disp.balance_of(get_contract_address());
+            let bal1 = token1_disp.balance_of(get_contract_address());
+            if bal0 > 0 {
+                token0_disp.transfer(vault, bal0);
+            }
+            if bal1 > 0 {
+                token1_disp.transfer(vault, bal1);
+            }
+
+            self.emit(Withdrawn { amount });
+        }
+
+        /// Total assets (token0 + token1 value in terms of token0).
+        /// Simplified: returns token0 amount only (token1 not converted).
+        fn total_assets(self: @ContractState) -> u256 {
+            let current_nft = self.nft_id.read();
+            if current_nft == 0 {
+                return 0;
+            }
+
+            let positions_disp = IEkuboPositionsDispatcher {
+                contract_address: self.ekubo_positions.read(),
+            };
+            let pool_key = self._pool_key();
+            let bounds = self._bounds();
+            let info: GetTokenInfoResult = positions_disp
+                .get_token_info(current_nft, pool_key, bounds);
+
+            // Return token0 (wBTC) amount + fees as total assets
+            // TODO: Convert token1 to token0 equivalent via oracle for accurate accounting
+            let total: u256 = info.amount0.into() + info.fees0.into();
+            total
+        }
+
+        fn vault(self: @ContractState) -> ContractAddress {
+            self.vault_addr.read()
+        }
+    }
+
+    // ── IEkuboLPStrategyExt Implementation ──
+    #[abi(embed_v0)]
+    impl EkuboLPStrategyExtImpl of super::super::traits::IEkuboLPStrategyExt<ContractState> {
+        fn deposit_liquidity(ref self: ContractState, amount0: u256, amount1: u256) {
+            self._assert_vault_only();
+            let positions_addr = self.ekubo_positions.read();
+
+            // Approve both tokens
+            let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
+            let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
+            token0_disp.approve(positions_addr, amount0);
+            token1_disp.approve(positions_addr, amount1);
+
+            let pool_key = self._pool_key();
+            let bounds = self._bounds();
+            let positions_disp = IEkuboPositionsDispatcher { contract_address: positions_addr };
+
+            let current_nft = self.nft_id.read();
+            if current_nft == 0 {
+                let (new_nft_id, _liq) = positions_disp
+                    .mint_and_deposit(pool_key, bounds, 0);
+                self.nft_id.write(new_nft_id);
+            } else {
+                positions_disp.deposit(current_nft, pool_key, bounds, 0);
+            }
+        }
+
+        fn withdraw_liquidity(
+            ref self: ContractState, ratio_wad: u256, min_token0: u128, min_token1: u128,
+        ) {
+            self._assert_vault_only();
+            let current_nft = self.nft_id.read();
+            assert(current_nft != 0, 'NO_POSITION');
+
+            let positions_disp = IEkuboPositionsDispatcher {
+                contract_address: self.ekubo_positions.read(),
+            };
+            let pool_key = self._pool_key();
+            let bounds = self._bounds();
+
+            let info = positions_disp.get_token_info(current_nft, pool_key, bounds);
+            // ratio_wad: 1e18 = 100%
+            let liq: u256 = info.liquidity.into();
+            let liq_to_remove_256: u256 = (liq * ratio_wad) / 1000000000000000000; // 1e18
+            let liq_to_remove: u128 = liq_to_remove_256.try_into().unwrap();
+
+            positions_disp
+                .withdraw(current_nft, pool_key, bounds, liq_to_remove, min_token0, min_token1, true);
+
+            // Transfer to vault
+            let vault = self.vault_addr.read();
+            let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
+            let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
+            let bal0 = token0_disp.balance_of(get_contract_address());
+            let bal1 = token1_disp.balance_of(get_contract_address());
+            if bal0 > 0 {
+                token0_disp.transfer(vault, bal0);
+            }
+            if bal1 > 0 {
+                token1_disp.transfer(vault, bal1);
+            }
+        }
+
+        fn collect_fees(ref self: ContractState) -> (u128, u128) {
+            self._assert_vault_only();
+            let current_nft = self.nft_id.read();
+            assert(current_nft != 0, 'NO_POSITION');
+
+            let positions_disp = IEkuboPositionsDispatcher {
+                contract_address: self.ekubo_positions.read(),
+            };
+            let pool_key = self._pool_key();
+            let bounds = self._bounds();
+
+            let (fees0, fees1) = positions_disp.collect_fees(current_nft, pool_key, bounds);
+
+            // Transfer fees to vault
+            let vault = self.vault_addr.read();
+            if fees0 > 0 {
+                let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
+                token0_disp.transfer(vault, fees0.into());
+            }
+            if fees1 > 0 {
+                let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
+                token1_disp.transfer(vault, fees1.into());
+            }
+
+            self.emit(FeesCollected { fees0, fees1 });
+            (fees0, fees1)
+        }
+
+        fn set_bounds(
+            ref self: ContractState,
+            lower_mag: u128, lower_sign: bool,
+            upper_mag: u128, upper_sign: bool,
+        ) {
+            self.ownable.assert_only_owner();
+            // Only allow bound changes when no active position
+            assert(self.nft_id.read() == 0, 'POSITION_ACTIVE');
+
+            self.lower_bound.write(i129 { mag: lower_mag, sign: lower_sign });
+            self.upper_bound.write(i129 { mag: upper_mag, sign: upper_sign });
+
+            self.emit(BoundsUpdated { lower_mag, lower_sign, upper_mag, upper_sign });
+        }
+
+        fn get_deposit_ratio(self: @ContractState) -> (u256, u256) {
+            // TODO: Calculate based on current price and tick bounds
+            // For now return 1:1 placeholder
+            (1, 1)
+        }
+
+        fn underlying_balance(self: @ContractState) -> (u256, u256) {
+            let current_nft = self.nft_id.read();
+            if current_nft == 0 {
+                return (0, 0);
+            }
+            let positions_disp = IEkuboPositionsDispatcher {
+                contract_address: self.ekubo_positions.read(),
+            };
+            let info = positions_disp
+                .get_token_info(current_nft, self._pool_key(), self._bounds());
+            (info.amount0.into(), info.amount1.into())
+        }
+
+        fn pending_fees(self: @ContractState) -> (u256, u256) {
+            let current_nft = self.nft_id.read();
+            if current_nft == 0 {
+                return (0, 0);
+            }
+            let positions_disp = IEkuboPositionsDispatcher {
+                contract_address: self.ekubo_positions.read(),
+            };
+            let info = positions_disp
+                .get_token_info(current_nft, self._pool_key(), self._bounds());
+            (info.fees0.into(), info.fees1.into())
+        }
+
+        fn total_liquidity(self: @ContractState) -> u128 {
+            let current_nft = self.nft_id.read();
+            if current_nft == 0 {
+                return 0;
+            }
+            let positions_disp = IEkuboPositionsDispatcher {
+                contract_address: self.ekubo_positions.read(),
+            };
+            let info = positions_disp
+                .get_token_info(current_nft, self._pool_key(), self._bounds());
+            info.liquidity
+        }
+
+        fn nft_id(self: @ContractState) -> u64 {
+            self.nft_id.read()
+        }
+    }
+
+    // ── Internal Helpers ──
+    #[generate_trait]
+    impl InternalImpl of InternalTrait {
+        fn _pool_key(self: @ContractState) -> PoolKey {
+            PoolKey {
+                token0: self.token0.read(),
+                token1: self.token1.read(),
+                fee: self.pool_fee.read(),
+                tick_spacing: self.pool_tick_spacing.read(),
+                extension: self.pool_extension.read(),
+            }
+        }
+
+        fn _bounds(self: @ContractState) -> Bounds {
+            Bounds {
+                lower: self.lower_bound.read(),
+                upper: self.upper_bound.read(),
+            }
+        }
+
+        fn _assert_vault_only(self: @ContractState) {
+            let caller = get_caller_address();
+            assert(caller == self.vault_addr.read(), 'ONLY_VAULT');
+        }
     }
 }
