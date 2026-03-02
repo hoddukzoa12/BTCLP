@@ -168,7 +168,8 @@ pub mod VesuLendingStrategy {
             self.emit(Withdrawn { amount });
         }
 
-        /// Total collateral assets held in Vesu pool.
+        /// Total assets: collateral in Vesu pool + any idle wBTC on this contract.
+        /// Idle balance can exist from rounding dust or direct transfers.
         fn total_assets(self: @ContractState) -> u256 {
             let pool_addr = self.vesu_pool.read();
             let asset_addr = self.asset.read();
@@ -182,7 +183,13 @@ pub mod VesuLendingStrategy {
             let collateral_shares_i257 = I257Impl::new(
                 position.collateral_shares, false,
             );
-            pool_disp.calculate_collateral(asset_addr, collateral_shares_i257)
+            let collateral = pool_disp.calculate_collateral(asset_addr, collateral_shares_i257);
+
+            // Include any idle wBTC sitting on the strategy contract
+            let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
+            let idle_balance = asset_disp.balance_of(get_contract_address());
+
+            collateral + idle_balance
         }
 
         fn vault(self: @ContractState) -> ContractAddress {

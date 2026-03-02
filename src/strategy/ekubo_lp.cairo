@@ -411,6 +411,17 @@ pub mod EkuboLPStrategy {
             self.ownable.assert_only_owner();
             self.manager_addr.write(new_manager);
         }
+
+        fn sweep_token1(ref self: ContractState, to: ContractAddress) -> u256 {
+            self.ownable.assert_only_owner();
+            let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
+            let bal = token1_disp.balance_of(get_contract_address());
+            if bal > 0 {
+                let success = token1_disp.transfer(to, bal);
+                assert(success, 'SWEEP_TRANSFER_FAILED');
+            }
+            bal
+        }
     }
 
     // ── Internal Helpers ──

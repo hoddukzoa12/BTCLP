@@ -245,6 +245,15 @@ pub mod BTCFiVault {
             self._assert_not_paused();
             assert(shares > 0, 'ZERO_SHARES');
 
+            // Preview assets before any strategy unwind
+            let preview_assets = self._convert_to_assets(shares);
+
+            // Pull liquidity FIRST so any IL from Ekubo unwind is realized
+            if preview_assets > 0 {
+                self._ensure_liquidity(preview_assets);
+            }
+
+            // Recompute assets AFTER liquidity pull to reflect realized IL
             let assets = self._convert_to_assets(shares);
 
             let caller = get_caller_address();
@@ -256,10 +265,8 @@ pub mod BTCFiVault {
             // Burn shares from owner (even if assets == 0, dust shares are cleaned up)
             self.erc20.burn(owner, shares);
 
-            // Only transfer and ensure liquidity if there are assets to send
+            // Only transfer if there are assets to send
             if assets > 0 {
-                self._ensure_liquidity(assets);
-
                 let asset_dispatcher = IERC20Dispatcher {
                     contract_address: self.asset_token.read(),
                 };
