@@ -207,6 +207,11 @@ pub mod VesuLendingStrategy {
             StrategyImpl::withdraw(ref self, amount);
         }
 
+        fn set_manager(ref self: ContractState, new_manager: ContractAddress) {
+            self.ownable.assert_only_owner();
+            self.manager_addr.write(new_manager);
+        }
+
         fn current_apy(self: @ContractState) -> u256 {
             let pool_addr = self.vesu_pool.read();
             let asset_addr = self.asset.read();

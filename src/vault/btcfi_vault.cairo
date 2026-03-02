@@ -202,6 +202,13 @@ pub mod BTCFiVault {
             self._assert_not_paused();
             assert(assets > 0, 'ZERO_ASSETS');
 
+            // Ensure vault has enough liquid assets FIRST.
+            // This may trigger strategy withdrawals (Ekubo can realize IL),
+            // which changes total_assets and therefore the share price.
+            self._ensure_liquidity(assets);
+
+            // Compute shares AFTER liquidity pull so the share price
+            // reflects any IL realized during strategy unwind.
             let shares = self._convert_to_shares_round_up(assets);
             assert(shares > 0, 'ZERO_SHARES');
 
@@ -211,9 +218,6 @@ pub mod BTCFiVault {
             if caller != owner {
                 self.erc20._spend_allowance(owner, caller, shares);
             }
-
-            // Ensure vault has enough liquid assets
-            self._ensure_liquidity(assets);
 
             // Burn shares from owner
             self.erc20.burn(owner, shares);

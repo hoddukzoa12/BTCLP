@@ -201,14 +201,16 @@ pub mod BTCFiManager {
                 VaultState::EkuboActive => {
                     // Escape: price exited LP range → move to Vesu
                     assert(price < lower || price > upper, 'PRICE_IN_RANGE');
-                    self._escape_to_vesu();
+                    let moved = self._escape_to_vesu();
+                    assert(moved, 'NO_ASSETS_TO_ESCAPE');
                     self.current_state.write(VaultState::VesuLending);
                     self.emit(StateChanged { from_state: 'EkuboActive', to_state: 'VesuLending' });
                 },
                 VaultState::VesuLending => {
                     // Return: price re-entered LP range → move back to Ekubo
                     assert(price >= lower && price <= upper, 'PRICE_OUT_OF_RANGE');
-                    self._return_to_ekubo();
+                    let moved = self._return_to_ekubo();
+                    assert(moved, 'NO_ASSETS_TO_RETURN');
                     self.current_state.write(VaultState::EkuboActive);
                     self.emit(StateChanged { from_state: 'VesuLending', to_state: 'EkuboActive' });
                 },
@@ -226,9 +228,9 @@ pub mod BTCFiManager {
             self.ownable.assert_only_owner();
             let state = self.current_state.read();
 
-            // If in EkuboActive, escape first
+            // If in EkuboActive, attempt escape first (ok if no assets moved)
             if state == VaultState::EkuboActive {
-                self._escape_to_vesu();
+                let _moved = self._escape_to_vesu();
             }
 
             self.current_state.write(VaultState::Emergency);
@@ -305,7 +307,8 @@ pub mod BTCFiManager {
         ///   3. Snapshot vault wBTC balance (after)
         ///   4. delta = after − before  (only the withdrawn amount)
         ///   5. Vault transfers delta to Vesu strategy → Vesu.deposit(delta)
-        fn _escape_to_vesu(ref self: ContractState) {
+        /// Returns true if assets were actually moved, false otherwise.
+        fn _escape_to_vesu(ref self: ContractState) -> bool {
             let ekubo_disp = IStrategyDispatcher {
                 contract_address: self.ekubo_strategy.read(),
             };
@@ -316,7 +319,7 @@ pub mod BTCFiManager {
 
             let ekubo_assets = ekubo_disp.total_assets();
             if ekubo_assets == 0 {
-                return;
+                return false;
             }
 
             let asset_addr = self.asset_token.read();
@@ -333,7 +336,7 @@ pub mod BTCFiManager {
             let balance_after = asset_disp.balance_of(vault_addr);
             let delta = balance_after - balance_before;
             if delta == 0 {
-                return;
+                return false;
             }
 
             // Transfer only the withdrawn wBTC to Vesu strategy (preserves vault buffer)
@@ -342,13 +345,15 @@ pub mod BTCFiManager {
 
             // Deposit into Vesu
             vesu_disp.deposit(delta);
+            true
         }
 
         /// Return: pull all wBTC from Vesu → transfer to Ekubo strategy → deposit.
         ///
         /// Uses before/after balance snapshot so only the **withdrawn** wBTC
         /// is forwarded — the vault's existing buffer is left untouched.
-        fn _return_to_ekubo(ref self: ContractState) {
+        /// Returns true if assets were actually moved, false otherwise.
+        fn _return_to_ekubo(ref self: ContractState) -> bool {
             let ekubo_strategy_addr = self.ekubo_strategy.read();
             let ekubo_disp = IStrategyDispatcher {
                 contract_address: ekubo_strategy_addr,
@@ -359,7 +364,7 @@ pub mod BTCFiManager {
 
             let vesu_assets = vesu_disp.total_assets();
             if vesu_assets == 0 {
-                return;
+                return false;
             }
 
             let asset_addr = self.asset_token.read();
@@ -376,7 +381,7 @@ pub mod BTCFiManager {
             let balance_after = asset_disp.balance_of(vault_addr);
             let delta = balance_after - balance_before;
             if delta == 0 {
-                return;
+                return false;
             }
 
             // Transfer only the withdrawn wBTC to Ekubo strategy (preserves vault buffer)
@@ -385,6 +390,7 @@ pub mod BTCFiManager {
 
             // Deposit into Ekubo
             ekubo_disp.deposit(delta);
+            true
         }
 
         fn _assert_keeper_or_owner(self: @ContractState) {

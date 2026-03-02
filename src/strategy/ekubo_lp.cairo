@@ -191,6 +191,11 @@ pub mod EkuboLPStrategy {
             let (_amount0, _amount1) = positions_disp
                 .withdraw(current_nft, pool_key, bounds, liq_to_remove, 0, 0, true);
 
+            // Clear nft_id if all liquidity was removed, so set_bounds is unblocked
+            if liq_to_remove == info.liquidity {
+                self.nft_id.write(0);
+            }
+
             // Transfer only token0 (wBTC) back to vault.
             // token1 (USDC) stays in strategy — vault is wBTC-only and cannot
             // account for USDC. Retained token1 can be swapped or redeployed
@@ -294,6 +299,11 @@ pub mod EkuboLPStrategy {
             positions_disp
                 .withdraw(current_nft, pool_key, bounds, liq_to_remove, min_token0, min_token1, true);
 
+            // Clear nft_id if all liquidity was removed, so set_bounds is unblocked
+            if liq_to_remove == info.liquidity {
+                self.nft_id.write(0);
+            }
+
             // Transfer only token0 (wBTC) to vault; retain token1 (USDC) in strategy
             let vault = self.vault_addr.read();
             let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
@@ -395,6 +405,11 @@ pub mod EkuboLPStrategy {
 
         fn nft_id(self: @ContractState) -> u64 {
             self.nft_id.read()
+        }
+
+        fn set_manager(ref self: ContractState, new_manager: ContractAddress) {
+            self.ownable.assert_only_owner();
+            self.manager_addr.write(new_manager);
         }
     }
 
