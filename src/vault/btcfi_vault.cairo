@@ -434,6 +434,25 @@ pub mod BTCFiVault {
         }
 
         // ────────────────────────────────────
+        //  Admin Setters (Owner only)
+        // ────────────────────────────────────
+
+        fn set_strategies(
+            ref self: ContractState,
+            ekubo_strategy: ContractAddress,
+            vesu_strategy: ContractAddress,
+        ) {
+            self.ownable.assert_only_owner();
+            self.ekubo_strategy_addr.write(ekubo_strategy);
+            self.vesu_strategy_addr.write(vesu_strategy);
+        }
+
+        fn set_manager_addr(ref self: ContractState, new_manager: ContractAddress) {
+            self.ownable.assert_only_owner();
+            self.manager_addr.write(new_manager);
+        }
+
+        // ────────────────────────────────────
         //  View
         // ────────────────────────────────────
 

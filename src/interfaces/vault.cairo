@@ -41,6 +41,22 @@ pub trait IBTCFiVault<TContractState> {
     /// before calling strategy.deposit().
     fn transfer_to_strategy(ref self: TContractState, strategy: ContractAddress, amount: u256);
 
+    // ── Admin Setters (Owner only) ──
+    // Used post-deployment to wire circular dependencies:
+    // Vault needs strategy/manager addresses, but strategies need vault address.
+    // Deploy vault first with zero addresses, deploy strategies with real vault,
+    // then call these setters to complete the wiring.
+
+    /// Set or update the strategy contract addresses. Owner only.
+    fn set_strategies(
+        ref self: TContractState,
+        ekubo_strategy: ContractAddress,
+        vesu_strategy: ContractAddress,
+    );
+
+    /// Set or update the manager contract address. Owner only.
+    fn set_manager_addr(ref self: TContractState, new_manager: ContractAddress);
+
     // ── View ──
     fn ekubo_allocation_bps(self: @TContractState) -> u16;
     fn vesu_allocation_bps(self: @TContractState) -> u16;
