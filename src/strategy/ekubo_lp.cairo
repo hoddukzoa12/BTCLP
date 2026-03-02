@@ -123,10 +123,9 @@ pub mod EkuboLPStrategy {
             let positions_addr = self.ekubo_positions.read();
             let token0_disp = IERC20Dispatcher { contract_address: token0_addr };
 
-            // Pull funds from vault into strategy (vault must have approved strategy)
-            let vault = self.vault_addr.read();
-            let success = token0_disp.transfer_from(vault, get_contract_address(), amount);
-            assert(success, 'TRANSFER_FROM_VAULT_FAILED');
+            // Strategy must already hold the funds (caller transfers before calling deposit)
+            let bal = token0_disp.balance_of(get_contract_address());
+            assert(bal >= amount, 'INSUFFICIENT_STRATEGY_BALANCE');
 
             // Approve Positions contract to spend token0
             token0_disp.approve(positions_addr, amount);

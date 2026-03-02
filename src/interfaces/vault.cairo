@@ -36,6 +36,11 @@ pub trait IBTCFiVault<TContractState> {
     fn unpause(ref self: TContractState);
     fn emergency_withdraw(ref self: TContractState);
 
+    /// Transfer assets from vault to a strategy contract during rebalance.
+    /// Called by Manager to move wBTC from vault to destination strategy
+    /// before calling strategy.deposit().
+    fn transfer_to_strategy(ref self: TContractState, strategy: ContractAddress, amount: u256);
+
     // ── View ──
     fn ekubo_allocation_bps(self: @TContractState) -> u16;
     fn vesu_allocation_bps(self: @TContractState) -> u16;

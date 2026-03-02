@@ -94,10 +94,9 @@ pub mod VesuLendingStrategy {
             let pool_addr = self.vesu_pool.read();
             let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
 
-            // Pull funds from vault into strategy (vault must have approved strategy)
-            let vault = self.vault_addr.read();
-            let success = asset_disp.transfer_from(vault, get_contract_address(), amount);
-            assert(success, 'TRANSFER_FROM_VAULT_FAILED');
+            // Strategy must already hold the funds (caller transfers before calling deposit)
+            let bal = asset_disp.balance_of(get_contract_address());
+            assert(bal >= amount, 'INSUFFICIENT_STRATEGY_BALANCE');
 
             // Approve pool to spend asset
             asset_disp.approve(pool_addr, amount);

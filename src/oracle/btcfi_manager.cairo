@@ -4,12 +4,18 @@
 /// State machine: EkuboActive → VesuLending → EkuboActive (or Emergency)
 /// "Escape" = BTC price exits LP tick range → pull liquidity → lend on Vesu
 /// "Return" = BTC price re-enters range → withdraw from Vesu → re-enter LP
+///
+/// Fund flow:
+///   Strategy.withdraw() → tokens land in vault
+///   Manager reads vault's wBTC balance → transfers to dest strategy → calls deposit()
 
 #[starknet::contract]
 pub mod BTCFiManager {
     use openzeppelin::access::ownable::OwnableComponent;
     use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
+
+    use openzeppelin::interfaces::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
 
     // Strategy interface
     use super::super::super::strategy::traits::{
@@ -19,6 +25,11 @@ pub mod BTCFiManager {
     // Pragma oracle interface
     use super::super::super::interfaces::pragma::{
         IPragmaABIDispatcher, IPragmaABIDispatcherTrait, DataType, PragmaPricesResponse,
+    };
+
+    // Vault interface for transferring assets between strategies
+    use super::super::super::interfaces::vault::{
+        IBTCFiVaultDispatcher, IBTCFiVaultDispatcherTrait,
     };
 
     // ── Component wiring ──
@@ -33,8 +44,6 @@ pub mod BTCFiManager {
     const BTC_USD_PAIR_ID: felt252 = 'BTC/USD';
     /// Maximum allowed price staleness (5 minutes)
     const DEFAULT_MAX_STALENESS: u64 = 300;
-    /// WAD = 1e18
-    const WAD: u256 = 1000000000000000000;
 
     // ── State Enum ──
     #[derive(Drop, Serde, Copy, starknet::Store, PartialEq)]
@@ -83,6 +92,7 @@ pub mod BTCFiManager {
         ekubo_strategy: ContractAddress,
         vesu_strategy: ContractAddress,
         pragma_oracle: ContractAddress,
+        asset_token: ContractAddress,      // wBTC token address
         max_price_staleness: u64,
         // Price bounds that correspond to Ekubo LP tick range
         lower_price_bound: u256,   // Below this → escape to Vesu
@@ -102,6 +112,7 @@ pub mod BTCFiManager {
         ekubo_strategy: ContractAddress,
         vesu_strategy: ContractAddress,
         pragma_oracle: ContractAddress,
+        asset_token: ContractAddress,
         keeper: ContractAddress,
         lower_price_bound: u256,
         upper_price_bound: u256,
@@ -111,6 +122,7 @@ pub mod BTCFiManager {
         self.ekubo_strategy.write(ekubo_strategy);
         self.vesu_strategy.write(vesu_strategy);
         self.pragma_oracle.write(pragma_oracle);
+        self.asset_token.write(asset_token);
         self.keeper.write(keeper);
         self.lower_price_bound.write(lower_price_bound);
         self.upper_price_bound.write(upper_price_bound);
@@ -282,13 +294,20 @@ pub mod BTCFiManager {
             response.price.into()
         }
 
-        /// Escape: pull all assets from Ekubo → deposit to Vesu.
+        /// Escape: pull all assets from Ekubo → transfer wBTC to Vesu strategy → deposit.
+        ///
+        /// Flow:
+        ///   1. Ekubo.withdraw(total) → tokens land in vault
+        ///   2. Read vault's actual wBTC balance
+        ///   3. Vault transfers wBTC to Vesu strategy (via vault.transfer_to_strategy)
+        ///   4. Vesu.deposit(actual_balance) — strategy checks its own balance
         fn _escape_to_vesu(ref self: ContractState) {
             let ekubo_disp = IStrategyDispatcher {
                 contract_address: self.ekubo_strategy.read(),
             };
+            let vesu_strategy_addr = self.vesu_strategy.read();
             let vesu_disp = IStrategyDispatcher {
-                contract_address: self.vesu_strategy.read(),
+                contract_address: vesu_strategy_addr,
             };
 
             // Step 1: Get total assets in Ekubo
@@ -297,18 +316,38 @@ pub mod BTCFiManager {
                 return;
             }
 
-            // Step 2: Withdraw all from Ekubo
+            // Step 2: Withdraw all from Ekubo (tokens go to vault)
             ekubo_disp.withdraw(ekubo_assets);
 
-            // Step 3: Deposit into Vesu
-            // Assets should now be in the vault; vault calls vesu_strategy.deposit
-            vesu_disp.deposit(ekubo_assets);
+            // Step 3: Read vault's actual wBTC balance (may differ from ekubo_assets
+            // because Ekubo returns mixed token0+token1, and only token0=wBTC goes to vault)
+            let asset_addr = self.asset_token.read();
+            let vault_addr = self.vault.read();
+            let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
+            let actual_wbtc = asset_disp.balance_of(vault_addr);
+            if actual_wbtc == 0 {
+                return;
+            }
+
+            // Step 4: Transfer wBTC from vault to Vesu strategy
+            let vault_disp = IBTCFiVaultDispatcher { contract_address: vault_addr };
+            vault_disp.transfer_to_strategy(vesu_strategy_addr, actual_wbtc);
+
+            // Step 5: Deposit into Vesu (strategy checks its own balance)
+            vesu_disp.deposit(actual_wbtc);
         }
 
-        /// Return: pull all assets from Vesu → deposit to Ekubo.
+        /// Return: pull all assets from Vesu → transfer wBTC to Ekubo strategy → deposit.
+        ///
+        /// Flow:
+        ///   1. Vesu.withdraw(total) → tokens land in vault
+        ///   2. Read vault's actual wBTC balance
+        ///   3. Vault transfers wBTC to Ekubo strategy
+        ///   4. Ekubo.deposit(actual_balance) — strategy checks its own balance
         fn _return_to_ekubo(ref self: ContractState) {
+            let ekubo_strategy_addr = self.ekubo_strategy.read();
             let ekubo_disp = IStrategyDispatcher {
-                contract_address: self.ekubo_strategy.read(),
+                contract_address: ekubo_strategy_addr,
             };
             let vesu_disp = IStrategyDispatcher {
                 contract_address: self.vesu_strategy.read(),
@@ -320,11 +359,24 @@ pub mod BTCFiManager {
                 return;
             }
 
-            // Step 2: Withdraw all from Vesu
+            // Step 2: Withdraw all from Vesu (tokens go to vault)
             vesu_disp.withdraw(vesu_assets);
 
-            // Step 3: Deposit into Ekubo
-            ekubo_disp.deposit(vesu_assets);
+            // Step 3: Read vault's actual wBTC balance
+            let asset_addr = self.asset_token.read();
+            let vault_addr = self.vault.read();
+            let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
+            let actual_wbtc = asset_disp.balance_of(vault_addr);
+            if actual_wbtc == 0 {
+                return;
+            }
+
+            // Step 4: Transfer wBTC from vault to Ekubo strategy
+            let vault_disp = IBTCFiVaultDispatcher { contract_address: vault_addr };
+            vault_disp.transfer_to_strategy(ekubo_strategy_addr, actual_wbtc);
+
+            // Step 5: Deposit into Ekubo (strategy checks its own balance)
+            ekubo_disp.deposit(actual_wbtc);
         }
 
         fn _assert_keeper_or_owner(self: @ContractState) {

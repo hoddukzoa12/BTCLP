@@ -374,6 +374,27 @@ pub mod BTCFiVault {
             self.emit(EmergencyWithdraw {});
         }
 
+        /// Transfer wBTC from vault to a strategy during rebalance.
+        /// Only callable by manager or owner. Used by BTCFiManager to move
+        /// assets from vault to destination strategy before calling strategy.deposit().
+        fn transfer_to_strategy(
+            ref self: ContractState, strategy: ContractAddress, amount: u256,
+        ) {
+            self._assert_owner_or_manager();
+            assert(amount > 0, 'ZERO_AMOUNT');
+
+            // Validate strategy is one of our registered strategies
+            let ekubo = self.ekubo_strategy_addr.read();
+            let vesu = self.vesu_strategy_addr.read();
+            assert(strategy == ekubo || strategy == vesu, 'INVALID_STRATEGY');
+
+            let asset_dispatcher = IERC20Dispatcher {
+                contract_address: self.asset_token.read(),
+            };
+            let success = asset_dispatcher.transfer(strategy, amount);
+            assert(success, 'TRANSFER_FAILED');
+        }
+
         // ────────────────────────────────────
         //  View
         // ────────────────────────────────────
