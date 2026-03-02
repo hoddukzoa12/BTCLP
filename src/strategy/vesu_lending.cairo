@@ -161,7 +161,8 @@ pub mod VesuLendingStrategy {
             let asset_disp = IERC20Dispatcher { contract_address: asset_addr };
             let bal = asset_disp.balance_of(get_contract_address());
             if bal > 0 {
-                asset_disp.transfer(vault, bal);
+                let success = asset_disp.transfer(vault, bal);
+                assert(success, 'WITHDRAW_TRANSFER_FAILED');
             }
 
             self.emit(Withdrawn { amount });

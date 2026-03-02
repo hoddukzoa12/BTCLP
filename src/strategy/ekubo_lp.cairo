@@ -199,7 +199,8 @@ pub mod EkuboLPStrategy {
             let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
             let bal0 = token0_disp.balance_of(get_contract_address());
             if bal0 > 0 {
-                token0_disp.transfer(vault, bal0);
+                let success = token0_disp.transfer(vault, bal0);
+                assert(success, 'WITHDRAW_TRANSFER_FAILED');
             }
 
             self.emit(Withdrawn { amount });
@@ -298,7 +299,8 @@ pub mod EkuboLPStrategy {
             let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
             let bal0 = token0_disp.balance_of(get_contract_address());
             if bal0 > 0 {
-                token0_disp.transfer(vault, bal0);
+                let success = token0_disp.transfer(vault, bal0);
+                assert(success, 'LIQ_TRANSFER_FAILED');
             }
         }
 
@@ -315,16 +317,17 @@ pub mod EkuboLPStrategy {
 
             let (fees0, fees1) = positions_disp.collect_fees(current_nft, pool_key, bounds);
 
-            // Transfer fees to vault
+            // Transfer only token0 (wBTC) fees to vault.
+            // token1 (USDC) fees stay in strategy — vault is wBTC-only and
+            // cannot account for USDC. Retained token1 can be swept via
+            // a separate keeper/governance path.
             let vault = self.vault_addr.read();
             if fees0 > 0 {
                 let token0_disp = IERC20Dispatcher { contract_address: self.token0.read() };
-                token0_disp.transfer(vault, fees0.into());
+                let success = token0_disp.transfer(vault, fees0.into());
+                assert(success, 'FEE0_TRANSFER_FAILED');
             }
-            if fees1 > 0 {
-                let token1_disp = IERC20Dispatcher { contract_address: self.token1.read() };
-                token1_disp.transfer(vault, fees1.into());
-            }
+            // token1 fees intentionally retained in strategy
 
             self.emit(FeesCollected { fees0, fees1 });
             (fees0, fees1)
