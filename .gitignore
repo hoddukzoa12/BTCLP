@@ -1,0 +1,20 @@
+# Scarb / Cairo
+target/
+corelib/
+
+# Starknet Foundry
+.snfoundry_cache/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
