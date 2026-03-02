@@ -58,6 +58,14 @@ pub trait IEkuboLPStrategyExt<TContractState> {
 
     /// Get the NFT token ID for the LP position.
     fn nft_id(self: @TContractState) -> u64;
+
+    /// Owner-only: update manager address (breaks constructor dependency cycle).
+    fn set_manager(ref self: TContractState, new_manager: ContractAddress);
+
+    /// Owner-only: sweep retained token1 (USDC) to a destination address.
+    /// Used to recover token1 that accumulates from Ekubo withdrawals
+    /// (vault is wBTC-only so token1 cannot be deposited there).
+    fn sweep_token1(ref self: TContractState, to: ContractAddress) -> u256;
 }
 
 /// Extended interface for VesuLending-specific operations.
@@ -71,4 +79,7 @@ pub trait IVesuLendingStrategyExt<TContractState> {
 
     /// Get the current APY estimate (in BPS, e.g., 350 = 3.5%).
     fn current_apy(self: @TContractState) -> u256;
+
+    /// Owner-only: update manager address (breaks constructor dependency cycle).
+    fn set_manager(ref self: TContractState, new_manager: ContractAddress);
 }

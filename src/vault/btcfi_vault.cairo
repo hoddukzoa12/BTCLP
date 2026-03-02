@@ -12,6 +12,12 @@ pub mod BTCFiVault {
     use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 
+    // Strategy interface for cross-contract calls (total_assets, withdraw)
+    use super::super::super::strategy::traits::{
+        IStrategyDispatcher, IStrategyDispatcherTrait,
+        IEkuboLPStrategyExtDispatcher, IEkuboLPStrategyExtDispatcherTrait,
+    };
+
     // ── Component wiring ──
     component!(path: ERC20Component, storage: erc20, event: ERC20Event);
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
@@ -197,6 +203,13 @@ pub mod BTCFiVault {
             self._assert_not_paused();
             assert(assets > 0, 'ZERO_ASSETS');
 
+            // Ensure vault has enough liquid assets FIRST.
+            // This may trigger strategy withdrawals (Ekubo can realize IL),
+            // which changes total_assets and therefore the share price.
+            self._ensure_liquidity(assets);
+
+            // Compute shares AFTER liquidity pull so the share price
+            // reflects any IL realized during strategy unwind.
             let shares = self._convert_to_shares_round_up(assets);
             assert(shares > 0, 'ZERO_SHARES');
 
@@ -206,9 +219,6 @@ pub mod BTCFiVault {
             if caller != owner {
                 self.erc20._spend_allowance(owner, caller, shares);
             }
-
-            // Ensure vault has enough liquid assets
-            self._ensure_liquidity(assets);
 
             // Burn shares from owner
             self.erc20.burn(owner, shares);
@@ -236,6 +246,15 @@ pub mod BTCFiVault {
             self._assert_not_paused();
             assert(shares > 0, 'ZERO_SHARES');
 
+            // Preview assets before any strategy unwind
+            let preview_assets = self._convert_to_assets(shares);
+
+            // Pull liquidity FIRST so any IL from Ekubo unwind is realized
+            if preview_assets > 0 {
+                self._ensure_liquidity(preview_assets);
+            }
+
+            // Recompute assets AFTER liquidity pull to reflect realized IL
             let assets = self._convert_to_assets(shares);
 
             let caller = get_caller_address();
@@ -247,10 +266,8 @@ pub mod BTCFiVault {
             // Burn shares from owner (even if assets == 0, dust shares are cleaned up)
             self.erc20.burn(owner, shares);
 
-            // Only transfer and ensure liquidity if there are assets to send
+            // Only transfer if there are assets to send
             if assets > 0 {
-                self._ensure_liquidity(assets);
-
                 let asset_dispatcher = IERC20Dispatcher {
                     contract_address: self.asset_token.read(),
                 };
@@ -271,16 +288,10 @@ pub mod BTCFiVault {
             self.asset_token.read()
         }
 
-        /// Total assets = buffer (vault balance) + ekubo strategy + vesu strategy
+        /// Total assets = buffer (vault balance) + ekubo strategy + vesu strategy.
+        /// This is the canonical AUM used for ERC-4626 share pricing.
         fn total_assets(self: @ContractState) -> u256 {
-            let buffer = self._buffer_balance();
-            // TODO: When strategies are implemented, call total_assets() on each
-            // let ekubo_assets = IStrategyDispatcher { contract_address:
-            // self.ekubo_strategy_addr.read() }.total_assets();
-            // let vesu_assets = IStrategyDispatcher { contract_address:
-            // self.vesu_strategy_addr.read() }.total_assets();
-            // buffer + ekubo_assets + vesu_assets
-            buffer
+            self._total_assets_internal()
         }
 
         fn convert_to_shares(self: @ContractState, assets: u256) -> u256 {
@@ -368,10 +379,58 @@ pub mod BTCFiVault {
 
         fn emergency_withdraw(ref self: ContractState) {
             self._assert_owner_or_manager();
-            // TODO: Pull all assets from both strategies back to vault buffer
-            // IStrategyDispatcher { ... }.withdraw(total_assets);
+
+            let zero: ContractAddress = 0.try_into().unwrap();
+
+            // Pull all assets from Vesu back to vault buffer
+            let vesu_addr = self.vesu_strategy_addr.read();
+            if vesu_addr != zero {
+                let vesu_disp = IStrategyDispatcher { contract_address: vesu_addr };
+                let vesu_assets = vesu_disp.total_assets();
+                if vesu_assets > 0 {
+                    vesu_disp.withdraw(vesu_assets);
+                }
+            }
+
+            // Pull all assets from Ekubo back to vault buffer.
+            // Uses IEkuboLPStrategyExt.withdraw_liquidity(100%) instead of
+            // IStrategy.withdraw(total_assets) because total_assets only counts
+            // token0 (wBTC). A token1-only position (price above range) has
+            // total_assets==0 but still holds liquidity that must be unwound.
+            let ekubo_addr = self.ekubo_strategy_addr.read();
+            if ekubo_addr != zero {
+                let ekubo_ext = IEkuboLPStrategyExtDispatcher {
+                    contract_address: ekubo_addr,
+                };
+                if ekubo_ext.total_liquidity() > 0 {
+                    // 1e18 = 100% of liquidity
+                    ekubo_ext.withdraw_liquidity(1000000000000000000, 0, 0);
+                }
+            }
+
             self.paused.write(true);
             self.emit(EmergencyWithdraw {});
+        }
+
+        /// Transfer wBTC from vault to a strategy during rebalance.
+        /// Only callable by manager or owner. Used by BTCFiManager to move
+        /// assets from vault to destination strategy before calling strategy.deposit().
+        fn transfer_to_strategy(
+            ref self: ContractState, strategy: ContractAddress, amount: u256,
+        ) {
+            self._assert_owner_or_manager();
+            assert(amount > 0, 'ZERO_AMOUNT');
+
+            // Validate strategy is one of our registered strategies
+            let ekubo = self.ekubo_strategy_addr.read();
+            let vesu = self.vesu_strategy_addr.read();
+            assert(strategy == ekubo || strategy == vesu, 'INVALID_STRATEGY');
+
+            let asset_dispatcher = IERC20Dispatcher {
+                contract_address: self.asset_token.read(),
+            };
+            let success = asset_dispatcher.transfer(strategy, amount);
+            assert(success, 'TRANSFER_FAILED');
         }
 
         // ────────────────────────────────────
@@ -453,10 +512,29 @@ pub mod BTCFiVault {
             (shares * (total + 1) + denominator - 1) / denominator
         }
 
-        /// Internal total_assets (avoids trait dispatch overhead)
+        /// Internal total_assets = buffer + ekubo + vesu strategy balances.
+        /// Used by all ERC-4626 conversion math for accurate share pricing.
         fn _total_assets_internal(self: @ContractState) -> u256 {
-            // Buffer only for now; strategies added later
-            self._buffer_balance()
+            let buffer = self._buffer_balance();
+
+            let ekubo_addr = self.ekubo_strategy_addr.read();
+            let vesu_addr = self.vesu_strategy_addr.read();
+
+            let zero: ContractAddress = 0.try_into().unwrap();
+
+            let ekubo_assets = if ekubo_addr != zero {
+                IStrategyDispatcher { contract_address: ekubo_addr }.total_assets()
+            } else {
+                0
+            };
+
+            let vesu_assets = if vesu_addr != zero {
+                IStrategyDispatcher { contract_address: vesu_addr }.total_assets()
+            } else {
+                0
+            };
+
+            buffer + ekubo_assets + vesu_assets
         }
 
         /// Get vault's wBTC balance (liquid buffer)
@@ -469,14 +547,53 @@ pub mod BTCFiVault {
 
         /// Ensure vault has enough liquid wBTC for withdrawal.
         /// If buffer is insufficient, pull from strategies.
+        /// Priority 1: Vesu (instant redemption, no IL)
+        /// Priority 2: Ekubo (may have impermanent loss)
         fn _ensure_liquidity(ref self: ContractState, needed: u256) {
-            let buffer = self._buffer_balance();
+            let mut buffer = self._buffer_balance();
             if buffer >= needed {
                 return;
             }
-            // TODO: Pull from strategies when implemented
-            // Priority 1: Vesu (instant, no IL)
-            // Priority 2: Ekubo (may have IL)
+
+            let shortfall = needed - buffer;
+            let zero: ContractAddress = 0.try_into().unwrap();
+
+            // Priority 1: Pull from Vesu (instant, no IL)
+            let vesu_addr = self.vesu_strategy_addr.read();
+            if vesu_addr != zero {
+                let vesu_disp = IStrategyDispatcher { contract_address: vesu_addr };
+                let vesu_available = vesu_disp.total_assets();
+                if vesu_available > 0 {
+                    let pull_amount = if shortfall <= vesu_available {
+                        shortfall
+                    } else {
+                        vesu_available
+                    };
+                    vesu_disp.withdraw(pull_amount);
+                    buffer = self._buffer_balance();
+                    if buffer >= needed {
+                        return;
+                    }
+                }
+            }
+
+            // Priority 2: Pull from Ekubo (may have IL)
+            let ekubo_addr = self.ekubo_strategy_addr.read();
+            if ekubo_addr != zero {
+                let ekubo_disp = IStrategyDispatcher { contract_address: ekubo_addr };
+                let ekubo_available = ekubo_disp.total_assets();
+                if ekubo_available > 0 {
+                    let remaining = needed - buffer;
+                    let pull_amount = if remaining <= ekubo_available {
+                        remaining
+                    } else {
+                        ekubo_available
+                    };
+                    ekubo_disp.withdraw(pull_amount);
+                    buffer = self._buffer_balance();
+                }
+            }
+
             assert(buffer >= needed, 'INSUFFICIENT_LIQUIDITY');
         }
 
