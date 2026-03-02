@@ -367,8 +367,29 @@ pub mod BTCFiVault {
 
         fn emergency_withdraw(ref self: ContractState) {
             self._assert_owner_or_manager();
-            // TODO: Pull all assets from both strategies back to vault buffer
-            // IStrategyDispatcher { ... }.withdraw(total_assets);
+
+            let zero: ContractAddress = 0.try_into().unwrap();
+
+            // Pull all assets from Vesu back to vault buffer
+            let vesu_addr = self.vesu_strategy_addr.read();
+            if vesu_addr != zero {
+                let vesu_disp = IStrategyDispatcher { contract_address: vesu_addr };
+                let vesu_assets = vesu_disp.total_assets();
+                if vesu_assets > 0 {
+                    vesu_disp.withdraw(vesu_assets);
+                }
+            }
+
+            // Pull all assets from Ekubo back to vault buffer
+            let ekubo_addr = self.ekubo_strategy_addr.read();
+            if ekubo_addr != zero {
+                let ekubo_disp = IStrategyDispatcher { contract_address: ekubo_addr };
+                let ekubo_assets = ekubo_disp.total_assets();
+                if ekubo_assets > 0 {
+                    ekubo_disp.withdraw(ekubo_assets);
+                }
+            }
+
             self.paused.write(true);
             self.emit(EmergencyWithdraw {});
         }
