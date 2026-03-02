@@ -26,10 +26,10 @@ allow-prebuilt-plugins = ["snforge_std"]
 
 [[tool.snforge.fork]]
 name = "MAINNET_FORK"
-url = "https://starknet-mainnet.public.blastapi.io/rpc/v0_7"
-block_id.tag = "latest"
+url = "https://api.cartridge.gg/x/starknet/mainnet"
+block_id.number = "7309600"
 
 [[tool.snforge.fork]]
 name = "SEPOLIA_FORK"
-url = "https://starknet-sepolia.public.blastapi.io/rpc/v0_7"
-block_id.tag = "latest"
+url = "https://rpc.starknet-testnet.lava.build:443/rpc/v0_7"
+block_id.number = "7108100"
