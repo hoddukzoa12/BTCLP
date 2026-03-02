@@ -367,7 +367,7 @@ pub mod BTCFiVault {
         }
 
         fn emergency_withdraw(ref self: ContractState) {
-            self.ownable.assert_only_owner();
+            self._assert_owner_or_manager();
             // TODO: Pull all assets from both strategies back to vault buffer
             // IStrategyDispatcher { ... }.withdraw(total_assets);
             self.paused.write(true);
