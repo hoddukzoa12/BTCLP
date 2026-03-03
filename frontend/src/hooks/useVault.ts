@@ -1,7 +1,8 @@
 "use client";
 
-import { useAccount, useReadContract, useSendTransaction } from "@starknet-react/core";
-import { VAULT_ABI } from "@/lib/abis/vault";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { callContract } from "@/lib/starknet";
 import { ADDRESSES } from "@/lib/addresses";
 import { POLLING_INTERVAL, ONE_SHARE } from "@/lib/constants";
 import { cairo, CallData } from "starknet";
@@ -9,109 +10,128 @@ import { cairo, CallData } from "starknet";
 const vaultAddr = ADDRESSES.sepolia.vault;
 const wbtcAddr = ADDRESSES.sepolia.wbtc;
 
+// --- Helpers ---
+
+const parseBigInt = (val: unknown): bigint => {
+  if (val === undefined || val === null) return 0n;
+  try {
+    return BigInt(val.toString());
+  } catch {
+    return 0n;
+  }
+};
+
+const parseNumber = (val: unknown): number => {
+  if (val === undefined || val === null) return 0;
+  try {
+    return Number(val);
+  } catch {
+    return 0;
+  }
+};
+
+/** Decode a u256 from two consecutive felt strings (low, high). */
+function u256FromFelts(low: string, high: string): bigint {
+  return BigInt(low) + (BigInt(high) << 128n);
+}
+
 export function useVault() {
-  const { address } = useAccount();
+  const { walletAddress, executeTransaction, isTxPending } = useAuth();
 
   // --- Read calls ---
 
-  const { data: totalAssets, refetch: refetchTotalAssets } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "total_assets",
-    args: [],
+  const { data: totalAssetsRaw, refetch: refetchTotalAssets } = useQuery({
+    queryKey: ["vault", "total_assets"],
+    queryFn: () => callContract(vaultAddr, "total_assets"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: totalSupply } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "total_supply",
-    args: [],
+  const { data: totalSupplyRaw } = useQuery({
+    queryKey: ["vault", "total_supply"],
+    queryFn: () => callContract(vaultAddr, "total_supply"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: sharePrice } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "convert_to_assets",
-    args: [cairo.uint256(ONE_SHARE)],
+  const { data: sharePriceRaw } = useQuery({
+    queryKey: ["vault", "convert_to_assets", "one_share"],
+    queryFn: () => {
+      const compiled = cairo.uint256(ONE_SHARE);
+      return callContract(vaultAddr, "convert_to_assets", [
+        compiled.low.toString(),
+        compiled.high.toString(),
+      ]);
+    },
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: ekuboAllocationBps } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "ekubo_allocation_bps",
-    args: [],
+  const { data: ekuboAllocationBpsRaw } = useQuery({
+    queryKey: ["vault", "ekubo_allocation_bps"],
+    queryFn: () => callContract(vaultAddr, "ekubo_allocation_bps"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: vesuAllocationBps } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "vesu_allocation_bps",
-    args: [],
+  const { data: vesuAllocationBpsRaw } = useQuery({
+    queryKey: ["vault", "vesu_allocation_bps"],
+    queryFn: () => callContract(vaultAddr, "vesu_allocation_bps"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: bufferBps } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "buffer_bps",
-    args: [],
+  const { data: bufferBpsRaw } = useQuery({
+    queryKey: ["vault", "buffer_bps"],
+    queryFn: () => callContract(vaultAddr, "buffer_bps"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: isPaused } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "is_paused",
-    args: [],
+  const { data: isPausedRaw } = useQuery({
+    queryKey: ["vault", "is_paused"],
+    queryFn: () => callContract(vaultAddr, "is_paused"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: userShares } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "balance_of",
-    args: address ? [address] : undefined,
+  const { data: userSharesRaw } = useQuery({
+    queryKey: ["vault", "balance_of", walletAddress],
+    queryFn: () => callContract(vaultAddr, "balance_of", [walletAddress!]),
     refetchInterval: POLLING_INTERVAL,
-    enabled: !!address,
+    enabled: !!walletAddress,
   });
 
-  const { data: userAssetValue } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "convert_to_assets",
-    args: userShares ? [cairo.uint256(BigInt(userShares?.toString() || "0"))] : undefined,
+  // Compute user shares bigint for dependent query
+  const userSharesParsed =
+    userSharesRaw && userSharesRaw.length >= 2
+      ? u256FromFelts(userSharesRaw[0], userSharesRaw[1])
+      : 0n;
+
+  const { data: userAssetValueRaw } = useQuery({
+    queryKey: ["vault", "convert_to_assets", "user", userSharesParsed.toString()],
+    queryFn: () => {
+      const compiled = cairo.uint256(userSharesParsed);
+      return callContract(vaultAddr, "convert_to_assets", [
+        compiled.low.toString(),
+        compiled.high.toString(),
+      ]);
+    },
     refetchInterval: POLLING_INTERVAL,
-    enabled: !!userShares,
+    enabled: userSharesParsed > 0n,
   });
 
-  const { data: maxWithdraw } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "max_withdraw",
-    args: address ? [address] : undefined,
+  const { data: maxWithdrawRaw } = useQuery({
+    queryKey: ["vault", "max_withdraw", walletAddress],
+    queryFn: () => callContract(vaultAddr, "max_withdraw", [walletAddress!]),
     refetchInterval: POLLING_INTERVAL,
-    enabled: !!address,
+    enabled: !!walletAddress,
   });
 
-  const { data: maxRedeem } = useReadContract({
-    address: vaultAddr,
-    abi: VAULT_ABI,
-    functionName: "max_redeem",
-    args: address ? [address] : undefined,
+  const { data: maxRedeemRaw } = useQuery({
+    queryKey: ["vault", "max_redeem", walletAddress],
+    queryFn: () => callContract(vaultAddr, "max_redeem", [walletAddress!]),
     refetchInterval: POLLING_INTERVAL,
-    enabled: !!address,
+    enabled: !!walletAddress,
   });
 
   // --- Write calls ---
 
-  const { sendAsync: sendTx, isPending: isTxPending } = useSendTransaction({});
-
   const deposit = async (amount: bigint) => {
-    if (!address) throw new Error("Wallet not connected");
+    if (!walletAddress) throw new Error("Wallet not connected");
     const calls = [
       {
         contractAddress: wbtcAddr,
@@ -121,90 +141,139 @@ export function useVault() {
       {
         contractAddress: vaultAddr,
         entrypoint: "deposit",
-        calldata: CallData.compile([cairo.uint256(amount), address]),
+        calldata: CallData.compile([cairo.uint256(amount), walletAddress]),
       },
     ];
-    return sendTx(calls);
+    return executeTransaction(calls);
   };
 
   const withdraw = async (assets: bigint) => {
-    if (!address) throw new Error("Wallet not connected");
+    if (!walletAddress) throw new Error("Wallet not connected");
     const calls = [
       {
         contractAddress: vaultAddr,
         entrypoint: "withdraw",
-        calldata: CallData.compile([cairo.uint256(assets), address, address]),
+        calldata: CallData.compile([
+          cairo.uint256(assets),
+          walletAddress,
+          walletAddress,
+        ]),
       },
     ];
-    return sendTx(calls);
+    return executeTransaction(calls);
   };
 
   const redeem = async (shares: bigint) => {
-    if (!address) throw new Error("Wallet not connected");
+    if (!walletAddress) throw new Error("Wallet not connected");
     const calls = [
       {
         contractAddress: vaultAddr,
         entrypoint: "redeem",
-        calldata: CallData.compile([cairo.uint256(shares), address, address]),
+        calldata: CallData.compile([
+          cairo.uint256(shares),
+          walletAddress,
+          walletAddress,
+        ]),
       },
     ];
-    return sendTx(calls);
+    return executeTransaction(calls);
   };
 
-  // --- Preview functions ---
+  // --- Preview hooks ---
 
   const usePreviewDeposit = (amount: bigint) => {
-    return useReadContract({
-      address: vaultAddr,
-      abi: VAULT_ABI,
-      functionName: "preview_deposit",
-      args: amount > 0n ? [cairo.uint256(amount)] : undefined,
+    const { data } = useQuery({
+      queryKey: ["vault", "preview_deposit", amount.toString()],
+      queryFn: () => {
+        const compiled = cairo.uint256(amount);
+        return callContract(vaultAddr, "preview_deposit", [
+          compiled.low.toString(),
+          compiled.high.toString(),
+        ]);
+      },
       enabled: amount > 0n,
     });
+    // Return an object matching the shape consumers expect (data field with the raw value)
+    const parsed = data && data.length >= 2 ? u256FromFelts(data[0], data[1]) : undefined;
+    return { data: parsed };
   };
 
   const usePreviewRedeem = (shares: bigint) => {
-    return useReadContract({
-      address: vaultAddr,
-      abi: VAULT_ABI,
-      functionName: "preview_redeem",
-      args: shares > 0n ? [cairo.uint256(shares)] : undefined,
+    const { data } = useQuery({
+      queryKey: ["vault", "preview_redeem", shares.toString()],
+      queryFn: () => {
+        const compiled = cairo.uint256(shares);
+        return callContract(vaultAddr, "preview_redeem", [
+          compiled.low.toString(),
+          compiled.high.toString(),
+        ]);
+      },
       enabled: shares > 0n,
     });
+    const parsed = data && data.length >= 2 ? u256FromFelts(data[0], data[1]) : undefined;
+    return { data: parsed };
   };
 
-  // Parse raw values safely
-  const parseBigInt = (val: unknown): bigint => {
-    if (val === undefined || val === null) return 0n;
-    try {
-      return BigInt(val.toString());
-    } catch {
-      return 0n;
-    }
-  };
+  // --- Parse raw felt arrays into final values ---
 
-  const parseNumber = (val: unknown): number => {
-    if (val === undefined || val === null) return 0;
-    try {
-      return Number(val);
-    } catch {
-      return 0;
-    }
-  };
+  const totalAssets =
+    totalAssetsRaw && totalAssetsRaw.length >= 2
+      ? u256FromFelts(totalAssetsRaw[0], totalAssetsRaw[1])
+      : 0n;
+
+  const totalSupply =
+    totalSupplyRaw && totalSupplyRaw.length >= 2
+      ? u256FromFelts(totalSupplyRaw[0], totalSupplyRaw[1])
+      : 0n;
+
+  const sharePrice =
+    sharePriceRaw && sharePriceRaw.length >= 2
+      ? u256FromFelts(sharePriceRaw[0], sharePriceRaw[1])
+      : 0n;
+
+  const ekuboAllocationBps = ekuboAllocationBpsRaw
+    ? parseNumber(ekuboAllocationBpsRaw[0])
+    : 0;
+
+  const vesuAllocationBps = vesuAllocationBpsRaw
+    ? parseNumber(vesuAllocationBpsRaw[0])
+    : 0;
+
+  const bufferBps = bufferBpsRaw ? parseNumber(bufferBpsRaw[0]) : 0;
+
+  // is_paused returns a Cairo bool enum: 0 = False, 1 = True
+  const isPaused = isPausedRaw ? parseBigInt(isPausedRaw[0]) !== 0n : false;
+
+  const userShares = userSharesParsed;
+
+  const userAssetValue =
+    userAssetValueRaw && userAssetValueRaw.length >= 2
+      ? u256FromFelts(userAssetValueRaw[0], userAssetValueRaw[1])
+      : 0n;
+
+  const maxWithdraw =
+    maxWithdrawRaw && maxWithdrawRaw.length >= 2
+      ? u256FromFelts(maxWithdrawRaw[0], maxWithdrawRaw[1])
+      : 0n;
+
+  const maxRedeem =
+    maxRedeemRaw && maxRedeemRaw.length >= 2
+      ? u256FromFelts(maxRedeemRaw[0], maxRedeemRaw[1])
+      : 0n;
 
   return {
     // Read data (parsed)
-    totalAssets: parseBigInt(totalAssets),
-    totalSupply: parseBigInt(totalSupply),
-    sharePrice: parseBigInt(sharePrice),
-    ekuboAllocationBps: parseNumber(ekuboAllocationBps),
-    vesuAllocationBps: parseNumber(vesuAllocationBps),
-    bufferBps: parseNumber(bufferBps),
-    isPaused: Boolean(isPaused),
-    userShares: parseBigInt(userShares),
-    userAssetValue: parseBigInt(userAssetValue),
-    maxWithdraw: parseBigInt(maxWithdraw),
-    maxRedeem: parseBigInt(maxRedeem),
+    totalAssets,
+    totalSupply,
+    sharePrice,
+    ekuboAllocationBps,
+    vesuAllocationBps,
+    bufferBps,
+    isPaused,
+    userShares,
+    userAssetValue,
+    maxWithdraw,
+    maxRedeem,
     // Write actions
     deposit,
     withdraw,

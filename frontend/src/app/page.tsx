@@ -1,6 +1,6 @@
 "use client";
 
-import { useAccount } from "@starknet-react/core";
+import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/layout/Header";
 import { StateIndicator } from "@/components/dashboard/StateIndicator";
 import { VaultStatsGrid } from "@/components/dashboard/VaultStatsGrid";
@@ -14,7 +14,7 @@ import { useManager } from "@/hooks/useManager";
 import { Bitcoin, Github, ExternalLink } from "lucide-react";
 
 export default function Dashboard() {
-  const { isConnected } = useAccount();
+  const auth = useAuth();
   const vault = useVault();
   const manager = useManager();
 
@@ -47,7 +47,7 @@ export default function Dashboard() {
           userShares={vault.userShares}
           userAssetValue={vault.userAssetValue}
           needsRebalance={manager.needsRebalance}
-          isConnected={isConnected ?? false}
+          isConnected={auth.authenticated}
         />
 
         {/* Two-column layout */}

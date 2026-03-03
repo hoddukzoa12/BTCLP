@@ -1,46 +1,22 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useAccount, useConnect, useDisconnect } from "@starknet-react/core";
-import { Bitcoin, Wallet, LogOut, ExternalLink } from "lucide-react";
+import { useEffect } from "react";
+import { Bitcoin, Wallet, LogOut, Loader2 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 import { shortenAddress } from "@/lib/utils";
 
-const WALLET_URLS: Record<string, string> = {
-  argentX: "https://www.argent.xyz/argent-x/",
-  braavos: "https://braavos.app/download-braavos-wallet/",
-};
-
 export function Header() {
-  const { address, isConnected } = useAccount();
-  const { connect, connectors } = useConnect();
-  const { disconnect } = useDisconnect();
-  const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const auth = useAuth();
 
-  // Close dropdown on outside click
+  // Auto-create wallet when authenticated but no wallet exists
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowDropdown(false);
-      }
+    if (auth.authenticated && auth.ready && !auth.isWalletReady && !auth.isTxPending) {
+      auth.createWallet().catch(() => {
+        // Wallet creation failed silently — user can retry
+      });
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const handleConnect = (connector: (typeof connectors)[number]) => {
-    const isAvailable = connector.available();
-    if (isAvailable) {
-      connect({ connector });
-      setShowDropdown(false);
-    } else {
-      // Wallet not installed — open install page
-      const url = WALLET_URLS[connector.id];
-      if (url) {
-        window.open(url, "_blank");
-      }
-    }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.authenticated, auth.ready, auth.isWalletReady, auth.isTxPending]);
 
   return (
     <header className="sticky top-0 z-50 border-b border-vault-border bg-vault-dark/80 backdrop-blur-xl">
@@ -73,77 +49,36 @@ export function Header() {
             </div>
 
             {/* Wallet */}
-            {isConnected && address ? (
+            {auth.authenticated && auth.isWalletReady && auth.walletAddress ? (
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-vault-surface border border-vault-border">
                   <Wallet className="w-3.5 h-3.5 text-btc-orange" />
                   <span className="text-xs font-mono text-gray-300">
-                    {shortenAddress(address)}
+                    {shortenAddress(auth.walletAddress)}
                   </span>
                 </div>
                 <button
-                  onClick={() => disconnect()}
+                  onClick={() => auth.logout()}
                   className="p-2 rounded-lg bg-vault-surface border border-vault-border hover:border-vault-red/50 transition-colors group"
                 >
                   <LogOut className="w-3.5 h-3.5 text-gray-500 group-hover:text-vault-red transition-colors" />
                 </button>
               </div>
-            ) : (
-              <div className="relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setShowDropdown(!showDropdown)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-btc-orange to-btc-deep text-white font-medium text-sm hover:shadow-lg hover:shadow-btc-orange/20 transition-all"
-                >
-                  <Wallet className="w-4 h-4" />
-                  Connect Wallet
-                </button>
-                {showDropdown && connectors.length > 0 && (
-                  <div className="absolute right-0 mt-2 w-56 rounded-lg bg-vault-card border border-vault-border shadow-xl z-50 overflow-hidden animate-fade-in">
-                    <div className="px-3 py-2 border-b border-vault-border">
-                      <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
-                        Choose Wallet
-                      </span>
-                    </div>
-                    {connectors.map((connector) => {
-                      const available = connector.available();
-                      return (
-                        <button
-                          key={connector.id}
-                          onClick={() => handleConnect(connector)}
-                          className="w-full text-left px-4 py-3 text-sm hover:bg-vault-surface transition-colors flex items-center gap-3"
-                        >
-                          <div className="w-7 h-7 rounded-md bg-vault-surface flex items-center justify-center flex-shrink-0">
-                            {connector.icon ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={typeof connector.icon === "string" ? connector.icon : connector.icon.dark}
-                                alt={connector.name}
-                                className="w-5 h-5 rounded-sm"
-                              />
-                            ) : (
-                              <Wallet className="w-3.5 h-3.5 text-btc-orange" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <span className={available ? "text-gray-200" : "text-gray-500"}>
-                              {connector.name}
-                            </span>
-                            {!available && (
-                              <div className="flex items-center gap-1 text-[10px] text-btc-orange">
-                                <span>Install</span>
-                                <ExternalLink className="w-2.5 h-2.5" />
-                              </div>
-                            )}
-                          </div>
-                          {available && (
-                            <div className="w-2 h-2 rounded-full bg-vault-green flex-shrink-0" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+            ) : auth.authenticated && !auth.isWalletReady ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-vault-surface border border-vault-border">
+                <Loader2 className="w-3.5 h-3.5 text-btc-orange animate-spin" />
+                <span className="text-xs font-mono text-gray-400">
+                  Setting up...
+                </span>
               </div>
+            ) : (
+              <button
+                onClick={() => auth.login()}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-btc-orange to-btc-deep text-white font-medium text-sm hover:shadow-lg hover:shadow-btc-orange/20 transition-all"
+              >
+                <Wallet className="w-4 h-4" />
+                Connect Wallet
+              </button>
             )}
           </div>
         </div>

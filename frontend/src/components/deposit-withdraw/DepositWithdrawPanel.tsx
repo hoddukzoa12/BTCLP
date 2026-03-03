@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAccount } from "@starknet-react/core";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -9,6 +8,7 @@ import {
   Ban,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import { useVault } from "@/hooks/useVault";
 import { useWbtcBalance } from "@/hooks/useWbtcBalance";
 import { formatWbtc, parseWbtc, cn } from "@/lib/utils";
@@ -17,7 +17,8 @@ type Tab = "deposit" | "withdraw";
 type WithdrawMode = "assets" | "shares";
 
 export function DepositWithdrawPanel() {
-  const { isConnected } = useAccount();
+  const auth = useAuth();
+  const isConnected = auth.authenticated && auth.isWalletReady;
   const vault = useVault();
   const { balance: wbtcBalance } = useWbtcBalance();
 

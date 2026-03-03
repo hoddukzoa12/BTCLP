@@ -1,7 +1,8 @@
 "use client";
 
-import { useAccount, useReadContract, useSendTransaction } from "@starknet-react/core";
-import { MANAGER_ABI } from "@/lib/abis/manager";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { callContract } from "@/lib/starknet";
 import { ADDRESSES } from "@/lib/addresses";
 import { POLLING_INTERVAL } from "@/lib/constants";
 import { VaultState } from "@/lib/types";
@@ -39,70 +40,60 @@ function decodeVaultState(raw: unknown): VaultState {
 }
 
 export function useManager() {
-  const { address } = useAccount();
+  const { walletAddress, executeTransaction, isTxPending } = useAuth();
 
-  const { data: rawState } = useReadContract({
-    address: managerAddr,
-    abi: MANAGER_ABI,
-    functionName: "get_state",
-    args: [],
+  const { data: rawState } = useQuery({
+    queryKey: ["manager", "get_state"],
+    queryFn: () => callContract(managerAddr, "get_state"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: rawBtcPrice } = useReadContract({
-    address: managerAddr,
-    abi: MANAGER_ABI,
-    functionName: "get_btc_price",
-    args: [],
+  const { data: rawBtcPrice } = useQuery({
+    queryKey: ["manager", "get_btc_price"],
+    queryFn: () => callContract(managerAddr, "get_btc_price"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: rawPriceBounds } = useReadContract({
-    address: managerAddr,
-    abi: MANAGER_ABI,
-    functionName: "get_price_bounds",
-    args: [],
+  const { data: rawPriceBounds } = useQuery({
+    queryKey: ["manager", "get_price_bounds"],
+    queryFn: () => callContract(managerAddr, "get_price_bounds"),
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: rawNeedsRebalance } = useReadContract({
-    address: managerAddr,
-    abi: MANAGER_ABI,
-    functionName: "check_rebalance",
-    args: [],
+  const { data: rawNeedsRebalance } = useQuery({
+    queryKey: ["manager", "check_rebalance"],
+    queryFn: () => callContract(managerAddr, "check_rebalance"),
     refetchInterval: POLLING_INTERVAL,
   });
 
   // --- Write calls ---
 
-  const { sendAsync: sendTx, isPending: isTxPending } = useSendTransaction({});
-
   const rebalance = async () => {
-    if (!address) throw new Error("Wallet not connected");
+    if (!walletAddress) throw new Error("Wallet not connected");
     const calls = [
       {
         contractAddress: managerAddr,
         entrypoint: "rebalance",
-        calldata: [],
+        calldata: [] as string[],
       },
     ];
-    return sendTx(calls);
+    return executeTransaction(calls);
   };
 
   const emergencyEscape = async () => {
-    if (!address) throw new Error("Wallet not connected");
+    if (!walletAddress) throw new Error("Wallet not connected");
     const calls = [
       {
         contractAddress: managerAddr,
         entrypoint: "emergency_escape",
-        calldata: [],
+        calldata: [] as string[],
       },
     ];
-    return sendTx(calls);
+    return executeTransaction(calls);
   };
 
   const setPriceBounds = async (lower: bigint, upper: bigint) => {
-    if (!address) throw new Error("Wallet not connected");
+    if (!walletAddress) throw new Error("Wallet not connected");
     const calls = [
       {
         contractAddress: managerAddr,
@@ -110,10 +101,11 @@ export function useManager() {
         calldata: CallData.compile([cairo.uint256(lower), cairo.uint256(upper)]),
       },
     ];
-    return sendTx(calls);
+    return executeTransaction(calls);
   };
 
-  // Parse values
+  // --- Parse values ---
+
   const parseBigInt = (val: unknown): bigint => {
     if (val === undefined || val === null) return 0n;
     try {
@@ -123,28 +115,41 @@ export function useManager() {
     }
   };
 
-  // Parse price bounds (returned as tuple/struct)
+  // get_state returns a single felt representing the enum variant index
+  const currentState = rawState ? decodeVaultState(rawState[0]) : VaultState.EkuboActive;
+
+  // get_btc_price returns a u256 (low, high)
+  const btcPrice =
+    rawBtcPrice && rawBtcPrice.length >= 2
+      ? BigInt(rawBtcPrice[0]) + (BigInt(rawBtcPrice[1]) << 128n)
+      : 0n;
+
+  // get_price_bounds returns two u256 values = 4 felts (lower_low, lower_high, upper_low, upper_high)
   let lowerBound = 0n;
   let upperBound = 0n;
   if (rawPriceBounds) {
     try {
-      if (Array.isArray(rawPriceBounds)) {
-        lowerBound = BigInt(rawPriceBounds[0]?.toString() || "0");
-        upperBound = BigInt(rawPriceBounds[1]?.toString() || "0");
-      } else {
-        const bounds = rawPriceBounds as Record<string, unknown>;
-        lowerBound = BigInt((bounds.lower || bounds[0] || "0").toString());
-        upperBound = BigInt((bounds.upper || bounds[1] || "0").toString());
+      if (rawPriceBounds.length >= 4) {
+        // Two u256 values: lower (felts 0,1), upper (felts 2,3)
+        lowerBound = BigInt(rawPriceBounds[0]) + (BigInt(rawPriceBounds[1]) << 128n);
+        upperBound = BigInt(rawPriceBounds[2]) + (BigInt(rawPriceBounds[3]) << 128n);
+      } else if (rawPriceBounds.length >= 2) {
+        // Fallback: two single felts
+        lowerBound = parseBigInt(rawPriceBounds[0]);
+        upperBound = parseBigInt(rawPriceBounds[1]);
       }
     } catch {
       // keep defaults
     }
   }
 
-  const currentState = decodeVaultState(rawState);
-  const btcPrice = parseBigInt(rawBtcPrice);
-  const needsRebalance = Boolean(rawNeedsRebalance);
-  const isOwner = address?.toLowerCase() === ADDRESSES.sepolia.owner.toLowerCase();
+  // check_rebalance returns a Cairo bool: 0 = false, 1 = true
+  const needsRebalance = rawNeedsRebalance
+    ? parseBigInt(rawNeedsRebalance[0]) !== 0n
+    : false;
+
+  const isOwner =
+    walletAddress?.toLowerCase() === ADDRESSES.sepolia.owner.toLowerCase();
 
   return {
     currentState,

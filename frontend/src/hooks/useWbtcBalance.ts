@@ -1,45 +1,49 @@
 "use client";
 
-import { useAccount, useReadContract } from "@starknet-react/core";
-import { ERC20_ABI } from "@/lib/abis/erc20";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { callContract } from "@/lib/starknet";
 import { ADDRESSES } from "@/lib/addresses";
 import { POLLING_INTERVAL } from "@/lib/constants";
 
 const wbtcAddr = ADDRESSES.sepolia.wbtc;
 const vaultAddr = ADDRESSES.sepolia.vault;
 
+/** Decode a u256 from two consecutive felt strings (low, high). */
+function u256FromFelts(low: string, high: string): bigint {
+  return BigInt(low) + (BigInt(high) << 128n);
+}
+
 export function useWbtcBalance() {
-  const { address } = useAccount();
+  const { walletAddress } = useAuth();
 
-  const { data: rawBalance } = useReadContract({
-    address: wbtcAddr,
-    abi: ERC20_ABI,
-    functionName: "balance_of",
-    args: address ? [address] : undefined,
+  const { data: rawBalance } = useQuery({
+    queryKey: ["wbtc", "balance_of", walletAddress],
+    queryFn: () => callContract(wbtcAddr, "balance_of", [walletAddress!]),
     refetchInterval: POLLING_INTERVAL,
-    enabled: !!address,
+    enabled: !!walletAddress,
   });
 
-  const { data: rawAllowance } = useReadContract({
-    address: wbtcAddr,
-    abi: ERC20_ABI,
-    functionName: "allowance",
-    args: address ? [address, vaultAddr] : undefined,
+  const { data: rawAllowance } = useQuery({
+    queryKey: ["wbtc", "allowance", walletAddress, vaultAddr],
+    queryFn: () =>
+      callContract(wbtcAddr, "allowance", [walletAddress!, vaultAddr]),
     refetchInterval: POLLING_INTERVAL,
-    enabled: !!address,
+    enabled: !!walletAddress,
   });
 
-  const parseBigInt = (val: unknown): bigint => {
-    if (val === undefined || val === null) return 0n;
-    try {
-      return BigInt(val.toString());
-    } catch {
-      return 0n;
-    }
-  };
+  const balance =
+    rawBalance && rawBalance.length >= 2
+      ? u256FromFelts(rawBalance[0], rawBalance[1])
+      : 0n;
+
+  const allowance =
+    rawAllowance && rawAllowance.length >= 2
+      ? u256FromFelts(rawAllowance[0], rawAllowance[1])
+      : 0n;
 
   return {
-    balance: parseBigInt(rawBalance),
-    allowance: parseBigInt(rawAllowance),
+    balance,
+    allowance,
   };
 }

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { StarknetProvider } from "@/components/providers/StarknetProvider";
+import { AppProvider } from "@/components/providers/AppProvider";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -17,7 +17,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="bg-vault-dark text-gray-100 min-h-screen antialiased font-body">
-        <StarknetProvider>
+        <AppProvider>
           <div className="noise-bg min-h-screen">
             {children}
           </div>
@@ -33,7 +33,7 @@ export default function RootLayout({
               },
             }}
           />
-        </StarknetProvider>
+        </AppProvider>
       </body>
     </html>
   );
