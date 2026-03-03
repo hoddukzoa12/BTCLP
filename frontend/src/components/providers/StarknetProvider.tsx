@@ -7,16 +7,11 @@ import {
   publicProvider,
   argent,
   braavos,
-  useInjectedConnectors,
 } from "@starknet-react/core";
 
-function StarknetProviderInner({ children }: { children: React.ReactNode }) {
-  const { connectors } = useInjectedConnectors({
-    recommended: [argent(), braavos()],
-    includeRecommended: "onlyIfNoConnectors",
-    order: "random",
-  });
+const connectors = [argent(), braavos()];
 
+export function StarknetProvider({ children }: { children: React.ReactNode }) {
   return (
     <StarknetConfig
       chains={[sepolia, mainnet]}
@@ -27,8 +22,4 @@ function StarknetProviderInner({ children }: { children: React.ReactNode }) {
       {children}
     </StarknetConfig>
   );
-}
-
-export function StarknetProvider({ children }: { children: React.ReactNode }) {
-  return <StarknetProviderInner>{children}</StarknetProviderInner>;
 }
