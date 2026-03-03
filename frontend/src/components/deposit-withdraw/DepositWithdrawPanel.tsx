@@ -30,6 +30,14 @@ export function DepositWithdrawPanel() {
   // Parse input amount
   const parsedAmount = amount ? parseWbtc(amount) : 0n;
 
+  // On-chain preview: how many shares for deposit, how many assets for redeem
+  const { data: previewDepositShares } = vault.usePreviewDeposit(
+    activeTab === "deposit" ? parsedAmount : 0n
+  );
+  const { data: previewRedeemAssets } = vault.usePreviewRedeem(
+    activeTab === "withdraw" && withdrawMode === "shares" ? parsedAmount : 0n
+  );
+
   // Reset amount when switching tabs
   useEffect(() => {
     setAmount("");
@@ -201,17 +209,23 @@ export function DepositWithdrawPanel() {
               <div className="flex justify-between text-xs">
                 <span className="text-gray-500">You will receive (est.)</span>
                 <span className="font-mono text-gray-300">
-                  ~{formatWbtc(parsedAmount)} bfVault
+                  ~{formatWbtc(previewDepositShares ?? parsedAmount)} bfVault
                 </span>
               </div>
             )}
-            {activeTab === "withdraw" && (
+            {activeTab === "withdraw" && withdrawMode === "shares" && (
               <div className="flex justify-between text-xs">
-                <span className="text-gray-500">
-                  {withdrawMode === "assets" ? "Shares to burn (est.)" : "wBTC to receive (est.)"}
-                </span>
+                <span className="text-gray-500">wBTC to receive (est.)</span>
                 <span className="font-mono text-gray-300">
-                  ~{formatWbtc(parsedAmount)} {withdrawMode === "assets" ? "bfVault" : "wBTC"}
+                  ~{formatWbtc(previewRedeemAssets ?? parsedAmount)} wBTC
+                </span>
+              </div>
+            )}
+            {activeTab === "withdraw" && withdrawMode === "assets" && (
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Shares to burn (est.)</span>
+                <span className="font-mono text-gray-300">
+                  ~{formatWbtc(parsedAmount)} bfVault
                 </span>
               </div>
             )}

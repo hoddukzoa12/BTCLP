@@ -1,28 +1,24 @@
 import { RpcProvider, Contract } from 'starknet';
 import type { Abi } from 'starknet';
 
-const RPC_URLS: Record<string, string> = {
-  sepolia: 'https://rpc.sepolia.voyager.online',
-  mainnet: 'https://rpc.voyager.online',
-};
+const DEFAULT_RPC_URL = 'https://starknet-sepolia.public.blastapi.io';
 
 let cachedProvider: RpcProvider | null = null;
-let cachedNetwork: string | null = null;
+let cachedUrl: string | null = null;
 
 /**
  * Returns a cached RpcProvider for the configured StarkNet network.
- * Uses NEXT_PUBLIC_STARKNET_NETWORK env var (defaults to "sepolia").
+ * Uses NEXT_PUBLIC_STARKNET_RPC_URL env var (defaults to Blast API Sepolia).
  */
 export function getProvider(): RpcProvider {
-  const network = process.env.NEXT_PUBLIC_STARKNET_NETWORK ?? 'sepolia';
+  const nodeUrl = process.env.NEXT_PUBLIC_STARKNET_RPC_URL ?? DEFAULT_RPC_URL;
 
-  if (cachedProvider && cachedNetwork === network) {
+  if (cachedProvider && cachedUrl === nodeUrl) {
     return cachedProvider;
   }
 
-  const nodeUrl = RPC_URLS[network] ?? RPC_URLS.sepolia;
   cachedProvider = new RpcProvider({ nodeUrl });
-  cachedNetwork = network;
+  cachedUrl = nodeUrl;
 
   return cachedProvider;
 }

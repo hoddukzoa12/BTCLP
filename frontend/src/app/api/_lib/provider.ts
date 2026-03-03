@@ -1,9 +1,12 @@
 import { RpcProvider } from "starknet";
 
+const DEFAULT_RPC_URL = "https://starknet-sepolia.public.blastapi.io";
+
 const providerCache = new Map<string, RpcProvider>();
 
 export function getRpcProvider(): RpcProvider {
-  const rpcUrl = process.env.RPC_URL || "https://rpc.sepolia.voyager.online";
+  const rpcUrl =
+    process.env.NEXT_PUBLIC_STARKNET_RPC_URL || DEFAULT_RPC_URL;
   const existing = providerCache.get(rpcUrl);
   if (existing) return existing;
 

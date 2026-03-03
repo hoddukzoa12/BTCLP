@@ -26,11 +26,9 @@ export async function POST(req: NextRequest) {
       : (result.address as string);
 
     return NextResponse.json({
-      wallet: {
-        id: result.id,
-        address,
-        publicKey,
-      },
+      walletId: result.id as string,
+      walletAddress: address,
+      publicKey,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Failed to create wallet";

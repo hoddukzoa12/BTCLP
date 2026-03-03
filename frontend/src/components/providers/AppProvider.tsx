@@ -33,7 +33,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <PrivyProvider
       appId={appId}
       config={{
-        loginMethods: ['email', 'google', 'twitter'],
+        loginMethods: ['email'],
         appearance: {
           theme: 'dark',
           accentColor: '#f97316',

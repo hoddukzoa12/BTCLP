@@ -58,10 +58,21 @@ export async function rawSign(
     )}`,
   };
 
-  // If we have a wallet auth key, try to build authorization signature
+  // If we have a wallet auth key, build a P-256 ECDSA authorization signature
   const authKey = process.env.PRIVY_WALLET_AUTH_PRIVATE_KEY;
   if (authKey) {
-    headers["privy-authorization-signature"] = authKey;
+    try {
+      const crypto = await import("crypto");
+      // The auth key should be a PEM-formatted P-256 private key
+      const sign = crypto.createSign("SHA256");
+      sign.update(JSON.stringify(body));
+      sign.end();
+      const signature = sign.sign(authKey, "base64");
+      headers["privy-authorization-signature"] = signature;
+    } catch (signErr) {
+      console.warn("Failed to compute authorization signature:", signErr);
+      // Continue without the signature — Privy will reject if it's required
+    }
   }
 
   const resp = await fetch(url, {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { CallData, CairoOption, CairoOptionVariant, CairoCustomEnum } from "starknet";
 import { verifyAuth } from "../../_lib/auth";
 import { getStarknetWallet, getReadyAccount, computeReadyAddress } from "../../_lib/ready";
 
@@ -38,10 +39,15 @@ export async function POST(req: NextRequest) {
       userJwt: auth.token,
     });
 
-    // Deploy account by executing a self-transfer (activates the account)
+    // Build constructor calldata matching Ready account's expected params
+    const signerEnum = new CairoCustomEnum({ Starknet: { pubkey: publicKey } });
+    const guardian = new CairoOption(CairoOptionVariant.None);
+    const constructorCalldata = CallData.compile({ owner: signerEnum, guardian });
+
+    // Deploy account with proper constructor calldata
     const result = await account.deployAccount({
       classHash,
-      constructorCalldata: [],
+      constructorCalldata,
       addressSalt: publicKey,
     });
 
