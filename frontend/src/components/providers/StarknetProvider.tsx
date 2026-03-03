@@ -7,11 +7,16 @@ import {
   publicProvider,
   argent,
   braavos,
+  useInjectedConnectors,
 } from "@starknet-react/core";
 
-const connectors = [argent(), braavos()];
-
 export function StarknetProvider({ children }: { children: React.ReactNode }) {
+  const { connectors } = useInjectedConnectors({
+    recommended: [argent(), braavos()],
+    includeRecommended: "always",
+    order: "random",
+  });
+
   return (
     <StarknetConfig
       chains={[sepolia, mainnet]}
