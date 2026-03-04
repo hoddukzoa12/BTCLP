@@ -241,23 +241,42 @@ export async function getReadyAccount(opts: {
 
 /**
  * Verify that a wallet belongs to the given user.
- * Checks the wallet's owner_id against the authenticated userId.
- * Returns the wallet data if ownership is confirmed, throws otherwise.
+ *
+ * Privy's `owner_id` field is a key quorum ID, not the user's `did:privy:...`.
+ * So we list all wallets for the user via `GET /v1/wallets?user_id=...` and
+ * check if the requested walletId is in that list.
  */
 export async function verifyWalletOwnership(
   walletId: string,
   userId: string,
-): Promise<Record<string, unknown>> {
-  const { wallet } = await getStarknetWallet(walletId);
-  const ownerId =
-    (wallet.owner_id as string) ||
-    (wallet.ownerId as string) ||
-    ((wallet.owner as Record<string, unknown>)?.user_id as string);
+): Promise<void> {
+  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID!;
+  const appSecret = process.env.PRIVY_APP_SECRET!;
 
-  if (!ownerId || ownerId !== userId) {
+  const url = new URL("https://api.privy.io/v1/wallets");
+  url.searchParams.set("chain_type", "starknet");
+  url.searchParams.set("user_id", userId);
+
+  const resp = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      "privy-app-id": appId,
+      "Content-Type": "application/json",
+      Authorization: `Basic ${Buffer.from(`${appId}:${appSecret}`).toString("base64")}`,
+    },
+  });
+
+  if (!resp.ok) {
+    throw new Error("Failed to verify wallet ownership");
+  }
+
+  const json = await resp.json();
+  const wallets = (json?.data as Record<string, unknown>[]) ?? [];
+  const match = wallets.some((w) => w.id === walletId);
+
+  if (!match) {
     throw new Error("Wallet does not belong to authenticated user");
   }
-  return wallet;
 }
 
 /**
