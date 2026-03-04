@@ -18,3 +18,9 @@ corelib/
 
 # Logs
 *.log
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/scripts/deploy-tmp/
