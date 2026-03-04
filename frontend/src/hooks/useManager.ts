@@ -13,28 +13,21 @@ const managerAddr = ADDRESSES.sepolia.manager;
 function decodeVaultState(raw: unknown): VaultState {
   if (raw === undefined || raw === null) return VaultState.EkuboActive;
 
-  // starknet.js returns Cairo enums in various formats
-  const str = JSON.stringify(raw);
-
-  if (str.includes("EkuboActive") || str.includes("0")) {
-    return VaultState.EkuboActive;
-  }
-  if (str.includes("VesuLending") || str.includes("1")) {
-    return VaultState.VesuLending;
-  }
-  if (str.includes("Emergency") || str.includes("2")) {
-    return VaultState.Emergency;
-  }
-
-  // Try numeric
+  // Try numeric conversion first (handles felt "0x0", "0x1", "0x2", BigInt, number)
   try {
-    const num = Number(raw);
+    const num = Number(BigInt(String(raw)));
     if (num === 0) return VaultState.EkuboActive;
     if (num === 1) return VaultState.VesuLending;
     if (num === 2) return VaultState.Emergency;
   } catch {
-    // fallback
+    // Not a numeric value, try string matching
   }
+
+  // starknet.js may return Cairo enums as named variants
+  const str = String(raw);
+  if (str.includes("EkuboActive")) return VaultState.EkuboActive;
+  if (str.includes("VesuLending")) return VaultState.VesuLending;
+  if (str.includes("Emergency")) return VaultState.Emergency;
 
   return VaultState.EkuboActive;
 }
