@@ -30,12 +30,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Verify the authenticated user owns this wallet
+    const { verifyWalletOwnership } = await import("../../_lib/ready");
+    await verifyWalletOwnership(walletId, auth.userId);
+
     const signature = await rawSign(walletId, messageHash);
 
     return NextResponse.json({ signature });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Failed to sign";
     console.error("Error signing:", msg);
+    if (msg.includes("does not belong")) {
+      return NextResponse.json({ error: msg }, { status: 403 });
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

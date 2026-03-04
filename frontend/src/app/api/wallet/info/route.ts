@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStarknetWallet, computeReadyAddress } from "../../_lib/ready";
+import { verifyAuth } from "../../_lib/auth";
+import { getStarknetWallet, computeReadyAddress, verifyWalletOwnership } from "../../_lib/ready";
 
 /**
  * POST /api/wallet/info
@@ -10,6 +11,14 @@ import { getStarknetWallet, computeReadyAddress } from "../../_lib/ready";
  */
 export async function POST(req: NextRequest) {
   try {
+    const auth = await verifyAuth(req);
+    if (!auth) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
     const { walletId } = body;
 
@@ -19,6 +28,9 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Verify the authenticated user owns this wallet
+    await verifyWalletOwnership(walletId, auth.userId);
 
     const { publicKey } = await getStarknetWallet(walletId);
     const address = computeReadyAddress(publicKey);
@@ -32,6 +44,10 @@ export async function POST(req: NextRequest) {
     const msg =
       error instanceof Error ? error.message : "Failed to get wallet info";
     console.error("Error fetching wallet info:", msg);
+
+    if (msg.includes("does not belong")) {
+      return NextResponse.json({ error: msg }, { status: 403 });
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -155,8 +155,15 @@ async function createStarknetWallet(
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyAuth(req);
+    if (!auth) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
-    const ownerId = body?.ownerId || auth?.userId;
+    const ownerId = auth.userId;
 
     const privy = getPrivyWalletClient();
     const authKeyId = process.env.PRIVY_WALLET_AUTH_KEY_ID;

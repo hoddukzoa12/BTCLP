@@ -79,6 +79,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Verify the authenticated user owns this wallet
+    const { verifyWalletOwnership } = await import("../../_lib/ready");
+    await verifyWalletOwnership(walletId, auth.userId);
+
     const { publicKey } = await getStarknetWallet(walletId);
     const address = computeReadyAddress(publicKey);
     const { account } = await getReadyAccount({
@@ -249,6 +253,9 @@ export async function POST(req: NextRequest) {
         ? error.message
         : "Failed to execute transaction";
     console.error("[execute] Error:", msg);
+    if (msg.includes("does not belong")) {
+      return NextResponse.json({ error: msg }, { status: 403 });
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -240,6 +240,27 @@ export async function getReadyAccount(opts: {
 }
 
 /**
+ * Verify that a wallet belongs to the given user.
+ * Checks the wallet's owner_id against the authenticated userId.
+ * Returns the wallet data if ownership is confirmed, throws otherwise.
+ */
+export async function verifyWalletOwnership(
+  walletId: string,
+  userId: string,
+): Promise<Record<string, unknown>> {
+  const { wallet } = await getStarknetWallet(walletId);
+  const ownerId =
+    (wallet.owner_id as string) ||
+    (wallet.ownerId as string) ||
+    ((wallet.owner as Record<string, unknown>)?.user_id as string);
+
+  if (!ownerId || ownerId !== userId) {
+    throw new Error("Wallet does not belong to authenticated user");
+  }
+  return wallet;
+}
+
+/**
  * Get a Starknet wallet's public key from Privy.
  */
 export async function getStarknetWallet(walletId: string) {

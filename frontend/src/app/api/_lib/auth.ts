@@ -28,30 +28,20 @@ export async function verifyAuth(
       return null;
     }
 
-    // Debug: decode token header + payload
-    const parts = token.split(".");
-    if (parts.length === 3) {
-      try {
-        const headerJson = Buffer.from(parts[0], "base64url").toString("utf8");
-        const header_decoded = JSON.parse(headerJson);
-        console.log("[verifyAuth] Token header:", JSON.stringify(header_decoded));
-
-        const payloadJson = Buffer.from(parts[1], "base64url").toString("utf8");
-        const payload = JSON.parse(payloadJson);
-        console.log("[verifyAuth] Token claims:", JSON.stringify({
-          iss: payload.iss,
-          aud: payload.aud,
-          sub: payload.sub,
-          exp: payload.exp,
-          iat: payload.iat,
-          sid: payload.sid,
-        }));
-        console.log("[verifyAuth] Expected aud:", process.env.NEXT_PUBLIC_PRIVY_APP_ID);
-        if (payload.exp && payload.exp < Date.now() / 1000) {
-          console.error("[verifyAuth] Token is EXPIRED! exp:", payload.exp, "now:", Math.floor(Date.now() / 1000));
+    // Debug: decode token header + payload (development only)
+    if (process.env.NODE_ENV === "development") {
+      const parts = token.split(".");
+      if (parts.length === 3) {
+        try {
+          const payloadJson = Buffer.from(parts[1], "base64url").toString("utf8");
+          const payload = JSON.parse(payloadJson);
+          console.log("[verifyAuth] Token iss:", payload.iss, "aud:", payload.aud);
+          if (payload.exp && payload.exp < Date.now() / 1000) {
+            console.error("[verifyAuth] Token is EXPIRED! exp:", payload.exp, "now:", Math.floor(Date.now() / 1000));
+          }
+        } catch {
+          console.warn("[verifyAuth] Could not decode token payload");
         }
-      } catch {
-        console.warn("[verifyAuth] Could not decode token header/payload");
       }
     }
 

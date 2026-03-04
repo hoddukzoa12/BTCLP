@@ -30,6 +30,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Verify the authenticated user owns this wallet
+    const { verifyWalletOwnership } = await import("../../_lib/ready");
+    await verifyWalletOwnership(walletId, auth.userId);
+
     const { publicKey } = await getStarknetWallet(walletId);
     const address = computeReadyAddress(publicKey);
 
@@ -60,6 +64,9 @@ export async function POST(req: NextRequest) {
     const msg =
       error instanceof Error ? error.message : "Failed to deploy wallet";
     console.error("Error deploying Ready account:", msg);
+    if (msg.includes("does not belong")) {
+      return NextResponse.json({ error: msg }, { status: 403 });
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
