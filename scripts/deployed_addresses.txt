@@ -1,22 +1,23 @@
-# BTCFi Vault - Sepolia Deployed Addresses (v2 — with migration guard)
-# Redeployed: 2026-03-02
+# BTCFi Vault - Sepolia Deployed Addresses (v3 — demo bounds $99,500-$103,000)
+# Redeployed: 2026-03-04
 
-OWNER=0x00f08dea4d30852afcdfb27306cef969d9fcc1322b2abd9bd702f3c0becc7ad1
+OWNER=0x004c577a051a932c2d962d685540d39c0194717f8559d5e14a59d720cc918b08
+OWNER_PK=0x48f67f6617385d2284cdb67c23f94074209adea463122ff230a00e6b72e799b
 
 # Mock Contracts
-WBTC_ADDR=0x0177e83c0a28698daf5f65cfd4923d75513eb8175fa76d110bb92133afb2d627
-USDC_ADDR=0x07dd53abf7295d27c8db4ae802fb92d714b26521834ce4e6fcdf98d110c9cf9f
-ORACLE_ADDR=0x03f794ee9180bccdaa24a625be30afeaa8ee23cde529ce63cc7874cbf0190858
-POSITIONS_ADDR=0x07271f07e391d3a1bf01f30816e9b02ef8b4f4a7ef5f53ee0e7f06e36992ee15
-VESU_POOL_ADDR=0x05b5e36ab832fda23475460f51d1d43e1e259e0bcc8051d37ec6a2596ce0d635
+WBTC_ADDR=0x14cfad93c79be2f099b84748b7dbc9bbb7f81fccf4cba590711a6a8624c6291
+USDC_ADDR=0x2977b4d253eb53ddbff6df4d49519d7e8c0fc9d5093b652bad0fcff1fe2d76b
+ORACLE_ADDR=0x786ebf806c4cd158d58edc0486510daa9d43c573ea0ee8605720d21a2e447d
+POSITIONS_ADDR=0x1186cbfee57254b5dc1521f9c290a16f5d997eee866614a8f8da8585d40c4ea
+VESU_POOL_ADDR=0x4059d0614e27c6d4210fd6fe823dc3f9000c7b646d3c273ec443b70ff33e5e7
 
 # Core Contracts
-VAULT_ADDR=0x0239c97b2771548702b4462122d6fdbb9f6d4ab66865c6c30fcd758524a91848
-EKUBO_STRAT_ADDR=0x0766ba0fc52c3b28088d139f239e883a8abc7fc75f71dec0af029f082dc9111a
-VESU_STRAT_ADDR=0x03583b0482ab227e20b3a452f8d3daea720fe74e2f4788180e17d1755a0d620b
-MANAGER_ADDR=0x00d94b1f41f882376e9f65932bfb6d3abe3282a7995d745e5d85446055386792
+VAULT_ADDR=0x2b74b61014670ccde658d03505e15326a7d493bedec488b1e7f97d6aa12b882
+EKUBO_STRAT_ADDR=0x6c0ba5081daf70b6fa0d58418d46403a8f1da4a28f215e5bd1b4864ae2c2b6f
+VESU_STRAT_ADDR=0x4e849f4f70c3bb2fb2c9c72511fd548f951a5f12b9345e089cd8a093de6f279
+MANAGER_ADDR=0x460d2e1a5d6c0283de2e1fefddcf6ad9afb34f32ef050af68a294ef452a2cbf
 
-# Class Hashes
+# Class Hashes (reused from v2)
 MOCK_ERC20_CLASS=0x791954bbedaf9acaeea321f8d7fb7264bb312268aa7e0104f93f8644ba4886e
 MOCK_PRAGMA_CLASS=0xe8b2e76dd81a1e3e0b61d350a900ef9d8960ec3d7a4e2e69330e1a3e3472a
 MOCK_EKUBO_CLASS=0x2f79cb691faee09d684c1729ac8efed73099a95ad77ae59e46f32a61e8f3857
@@ -26,11 +27,16 @@ EKUBO_CLASS=0xcd4392b19afae905a3be31a54326624739424b8d0650160e513417a70fe6c1
 VESU_CLASS=0x1024a284f21dbf70114f452b9e4326666f02652ffde74dcb335e74285dd2ed2
 MANAGER_CLASS=0x2a0fca540de3c9158ac0acb95495d16b223e496333d98f41d2b99abcb803460
 
+# Demo Config
+# Bounds: $99,500 - $103,000
+# Oracle: $100,000 (In Range)
+# Deployer PK available for owner operations
+
 # Voyager links:
-# Vault:    https://sepolia.voyager.online/contract/0x0239c97b2771548702b4462122d6fdbb9f6d4ab66865c6c30fcd758524a91848
-# Manager:  https://sepolia.voyager.online/contract/0x00d94b1f41f882376e9f65932bfb6d3abe3282a7995d745e5d85446055386792
-# Ekubo:    https://sepolia.voyager.online/contract/0x0766ba0fc52c3b28088d139f239e883a8abc7fc75f71dec0af029f082dc9111a
-# Vesu:     https://sepolia.voyager.online/contract/0x03583b0482ab227e20b3a452f8d3daea720fe74e2f4788180e17d1755a0d620b
-# wBTC:     https://sepolia.voyager.online/contract/0x0177e83c0a28698daf5f65cfd4923d75513eb8175fa76d110bb92133afb2d627
-# USDC:     https://sepolia.voyager.online/contract/0x07dd53abf7295d27c8db4ae802fb92d714b26521834ce4e6fcdf98d110c9cf9f
-# Oracle:   https://sepolia.voyager.online/contract/0x03f794ee9180bccdaa24a625be30afeaa8ee23cde529ce63cc7874cbf0190858
+# Vault:    https://sepolia.voyager.online/contract/0x2b74b61014670ccde658d03505e15326a7d493bedec488b1e7f97d6aa12b882
+# Manager:  https://sepolia.voyager.online/contract/0x460d2e1a5d6c0283de2e1fefddcf6ad9afb34f32ef050af68a294ef452a2cbf
+# Ekubo:    https://sepolia.voyager.online/contract/0x6c0ba5081daf70b6fa0d58418d46403a8f1da4a28f215e5bd1b4864ae2c2b6f
+# Vesu:     https://sepolia.voyager.online/contract/0x4e849f4f70c3bb2fb2c9c72511fd548f951a5f12b9345e089cd8a093de6f279
+# wBTC:     https://sepolia.voyager.online/contract/0x14cfad93c79be2f099b84748b7dbc9bbb7f81fccf4cba590711a6a8624c6291
+# USDC:     https://sepolia.voyager.online/contract/0x2977b4d253eb53ddbff6df4d49519d7e8c0fc9d5093b652bad0fcff1fe2d76b
+# Oracle:   https://sepolia.voyager.online/contract/0x786ebf806c4cd158d58edc0486510daa9d43c573ea0ee8605720d21a2e447d

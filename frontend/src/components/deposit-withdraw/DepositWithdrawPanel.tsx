@@ -8,9 +8,11 @@ import {
   Ban,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useVault } from "@/hooks/useVault";
 import { useWbtcBalance } from "@/hooks/useWbtcBalance";
+import { waitForTx } from "@/lib/starknet";
 import { formatWbtc, parseWbtc, cn } from "@/lib/utils";
 
 type Tab = "deposit" | "withdraw";
@@ -18,6 +20,7 @@ type WithdrawMode = "assets" | "shares";
 
 export function DepositWithdrawPanel() {
   const auth = useAuth();
+  const queryClient = useQueryClient();
   const isConnected = auth.authenticated && auth.isWalletReady;
   const vault = useVault();
   const { balance: wbtcBalance } = useWbtcBalance();
@@ -47,7 +50,9 @@ export function DepositWithdrawPanel() {
     if (!isConnected || parsedAmount <= 0n) return;
     setIsSubmitting(true);
     try {
-      await vault.deposit(parsedAmount);
+      const depositResult = await vault.deposit(parsedAmount);
+      await waitForTx(depositResult.transactionHash);
+      await queryClient.invalidateQueries();
       toast.success("Deposit submitted!", {
         description: `Depositing ${formatWbtc(parsedAmount)} wBTC`,
       });
@@ -65,12 +70,16 @@ export function DepositWithdrawPanel() {
     setIsSubmitting(true);
     try {
       if (withdrawMode === "shares") {
-        await vault.redeem(parsedAmount);
+        const redeemResult = await vault.redeem(parsedAmount);
+        await waitForTx(redeemResult.transactionHash);
+        await queryClient.invalidateQueries();
         toast.success("Redeem submitted!", {
           description: `Redeeming ${formatWbtc(parsedAmount)} shares`,
         });
       } else {
-        await vault.withdraw(parsedAmount);
+        const withdrawResult = await vault.withdraw(parsedAmount);
+        await waitForTx(withdrawResult.transactionHash);
+        await queryClient.invalidateQueries();
         toast.success("Withdrawal submitted!", {
           description: `Withdrawing ${formatWbtc(parsedAmount)} wBTC`,
         });

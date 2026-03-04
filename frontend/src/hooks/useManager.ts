@@ -9,6 +9,12 @@ import { VaultState } from "@/lib/types";
 import { cairo, CallData } from "starknet";
 
 const managerAddr = ADDRESSES.sepolia.manager;
+const oracleAddr = ADDRESSES.sepolia.oracle;
+
+// BTC/USD pair_id as felt ('BTC/USD' encoded)
+const BTC_USD_PAIR_ID = "0x4254432f555344";
+// get_data_median calldata: DataType::SpotEntry(pair_id) = [0, pair_id]
+const ORACLE_CALLDATA = ["0", BTC_USD_PAIR_ID];
 
 function decodeVaultState(raw: unknown): VaultState {
   if (raw === undefined || raw === null) return VaultState.EkuboActive;
@@ -41,9 +47,10 @@ export function useManager() {
     refetchInterval: POLLING_INTERVAL,
   });
 
-  const { data: rawBtcPrice } = useQuery({
-    queryKey: ["manager", "get_btc_price"],
-    queryFn: () => callContract(managerAddr, "get_btc_price"),
+  // Read price directly from Oracle (avoids Manager's staleness revert)
+  const { data: rawOraclePrice } = useQuery({
+    queryKey: ["oracle", "get_data_median"],
+    queryFn: () => callContract(oracleAddr, "get_data_median", ORACLE_CALLDATA),
     refetchInterval: POLLING_INTERVAL,
   });
 
@@ -111,11 +118,8 @@ export function useManager() {
   // get_state returns a single felt representing the enum variant index
   const currentState = rawState ? decodeVaultState(rawState[0]) : VaultState.EkuboActive;
 
-  // get_btc_price returns a u256 (low, high)
-  const btcPrice =
-    rawBtcPrice && rawBtcPrice.length >= 2
-      ? BigInt(rawBtcPrice[0]) + (BigInt(rawBtcPrice[1]) << 128n)
-      : 0n;
+  // Oracle get_data_median returns PragmaPricesResponse: [price(u128), decimals, timestamp, num_sources, expiration]
+  const btcPrice = rawOraclePrice ? parseBigInt(rawOraclePrice[0]) : 0n;
 
   // get_price_bounds returns two u256 values = 4 felts (lower_low, lower_high, upper_low, upper_high)
   let lowerBound = 0n;
@@ -141,8 +145,15 @@ export function useManager() {
     ? parseBigInt(rawNeedsRebalance[0]) !== 0n
     : false;
 
-  const isOwner =
-    walletAddress?.toLowerCase() === ADDRESSES.sepolia.owner.toLowerCase();
+  // Compare as BigInt to handle hex format differences (leading zeros, case)
+  let isOwner = false;
+  if (walletAddress) {
+    try {
+      isOwner = BigInt(walletAddress) === BigInt(ADDRESSES.sepolia.owner);
+    } catch {
+      isOwner = false;
+    }
+  }
 
   return {
     currentState,

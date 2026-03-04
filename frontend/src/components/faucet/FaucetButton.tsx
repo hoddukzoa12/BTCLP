@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { Droplets, Loader2, Check } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useWbtcBalance } from "@/hooks/useWbtcBalance";
 import { ADDRESSES } from "@/lib/addresses";
 import { ONE_WBTC } from "@/lib/constants";
+import { waitForTx } from "@/lib/starknet";
 import { formatWbtc, cn } from "@/lib/utils";
 import { cairo, CallData } from "starknet";
 
@@ -14,6 +16,7 @@ const FAUCET_AMOUNT = ONE_WBTC; // 1 wBTC per faucet click
 
 export function FaucetButton() {
   const auth = useAuth();
+  const queryClient = useQueryClient();
   const { balance } = useWbtcBalance();
   const [isMinting, setIsMinting] = useState(false);
   const [justMinted, setJustMinted] = useState(false);
@@ -25,7 +28,7 @@ export function FaucetButton() {
 
     setIsMinting(true);
     try {
-      await auth.executeTransaction([
+      const result = await auth.executeTransaction([
         {
           contractAddress: ADDRESSES.sepolia.wbtc,
           entrypoint: "mint_to",
@@ -36,6 +39,8 @@ export function FaucetButton() {
         },
       ]);
 
+      await waitForTx(result.transactionHash);
+      await queryClient.invalidateQueries();
       toast.success("Faucet success!", {
         description: `Received ${formatWbtc(FAUCET_AMOUNT)} test wBTC`,
       });

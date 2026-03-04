@@ -8,8 +8,8 @@ import { AllocationChart } from "@/components/dashboard/AllocationChart";
 import { DepositWithdrawPanel } from "@/components/deposit-withdraw/DepositWithdrawPanel";
 import { RebalancePanel } from "@/components/rebalance/RebalancePanel";
 import { FaucetButton } from "@/components/faucet/FaucetButton";
+import { OraclePricePanel } from "@/components/oracle/OraclePricePanel";
 import { BtcPriceChart } from "@/components/charts/BtcPriceChart";
-import { EventLog } from "@/components/events/EventLog";
 import { useVault } from "@/hooks/useVault";
 import { useManager } from "@/hooks/useManager";
 import { Bitcoin, Github, ExternalLink } from "lucide-react";
@@ -38,7 +38,11 @@ export default function Dashboard() {
         </div>
 
         {/* State Indicator */}
-        <StateIndicator state={manager.currentState} />
+        <StateIndicator
+          state={manager.currentState}
+          isInRange={manager.btcPrice >= manager.lowerBound && manager.btcPrice <= manager.upperBound}
+          needsRebalance={manager.needsRebalance}
+        />
 
         {/* Stats Grid */}
         <VaultStatsGrid
@@ -56,10 +60,8 @@ export default function Dashboard() {
           {/* Left column */}
           <div className="space-y-6">
             <AllocationChart
-              ekuboBps={vault.ekuboAllocationBps}
-              vesuBps={vault.vesuAllocationBps}
-              bufferBps={vault.bufferBps}
               totalAssets={vault.totalAssets}
+              currentState={manager.currentState}
             />
             <FaucetButton />
             <DepositWithdrawPanel />
@@ -68,6 +70,7 @@ export default function Dashboard() {
           {/* Right column */}
           <div className="space-y-6">
             <RebalancePanel />
+            <OraclePricePanel />
           </div>
         </div>
 
@@ -80,8 +83,6 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Event Log */}
-        <EventLog />
       </main>
 
       {/* Footer */}
@@ -105,7 +106,7 @@ export default function Dashboard() {
                 GitHub
               </a>
               <a
-                href="https://sepolia.starkscan.co/contract/0x0239c97b2771548702b4462122d6fdbb9f6d4ab66865c6c30fcd758524a91848"
+                href="https://sepolia.starkscan.co/contract/0x2b74b61014670ccde658d03505e15326a7d493bedec488b1e7f97d6aa12b882"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-btc-orange transition-colors"

@@ -1,16 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { formatWbtc, formatBps } from "@/lib/utils";
+import { formatWbtc } from "@/lib/utils";
+import { VaultState } from "@/lib/types";
 
-// Wrap entire chart in a single dynamic import to avoid recharts SSR issues
 const ChartInner = dynamic(() => import("./AllocationChartInner"), { ssr: false });
 
 interface AllocationChartProps {
-  ekuboBps: number;
-  vesuBps: number;
-  bufferBps: number;
   totalAssets: bigint;
+  currentState: VaultState;
 }
 
 const COLORS = {
@@ -19,17 +17,42 @@ const COLORS = {
   buffer: "#4B5563",
 };
 
-export function AllocationChart({
-  ekuboBps,
-  vesuBps,
-  bufferBps,
-  totalAssets,
-}: AllocationChartProps) {
+// Derive logical allocation from vault state
+// Mock contracts don't transfer tokens — state tracks where funds are "deployed"
+function deriveAllocation(totalAssets: bigint, state: VaultState) {
+  if (totalAssets === 0n) {
+    return { ekubo: 0n, vesu: 0n, buffer: 0n };
+  }
+
+  const bufferAmount = (totalAssets * 1000n) / 10000n; // 10% buffer
+  const deployedAmount = totalAssets - bufferAmount;
+
+  switch (state) {
+    case VaultState.EkuboActive:
+      return { ekubo: deployedAmount, vesu: 0n, buffer: bufferAmount };
+    case VaultState.VesuLending:
+      return { ekubo: 0n, vesu: deployedAmount, buffer: bufferAmount };
+    default:
+      return { ekubo: 0n, vesu: 0n, buffer: totalAssets };
+  }
+}
+
+export function AllocationChart({ totalAssets, currentState }: AllocationChartProps) {
+  const alloc = deriveAllocation(totalAssets, currentState);
+  const total = alloc.ekubo + alloc.vesu + alloc.buffer;
+
+  const bps = (part: bigint) => (total === 0n ? 0 : Number((part * 10000n) / total));
+  const ekuboBps = bps(alloc.ekubo);
+  const vesuBps = bps(alloc.vesu);
+  const bufferBps = bps(alloc.buffer);
+
   const data = [
     { name: "Ekubo LP", value: ekuboBps, color: COLORS.ekubo },
     { name: "Vesu Lending", value: vesuBps, color: COLORS.vesu },
     { name: "Buffer", value: bufferBps, color: COLORS.buffer },
   ].filter((d) => d.value > 0);
+
+  const fmtPct = (v: number) => `${(v / 100).toFixed(1)}%`;
 
   return (
     <div className="rounded-xl border border-vault-border bg-vault-card p-5 animate-fade-in">
@@ -38,10 +61,8 @@ export function AllocationChart({
       </h3>
 
       <div className="flex items-center gap-6">
-        {/* Chart */}
         <div className="w-40 h-40 relative">
           <ChartInner data={data} />
-          {/* Center label */}
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <span className="text-[10px] text-gray-500">Total</span>
             <span className="text-sm font-mono font-bold text-white">
@@ -51,12 +72,11 @@ export function AllocationChart({
           </div>
         </div>
 
-        {/* Legend */}
         <div className="flex-1 space-y-3">
           {[
-            { label: "Ekubo LP", bps: ekuboBps, color: COLORS.ekubo, desc: "Concentrated Liquidity" },
-            { label: "Vesu Lending", bps: vesuBps, color: COLORS.vesu, desc: "Lending Pool" },
-            { label: "Buffer", bps: bufferBps, color: COLORS.buffer, desc: "Vault Reserve" },
+            { label: "Ekubo LP", bp: ekuboBps, amount: alloc.ekubo, color: COLORS.ekubo, desc: "Concentrated Liquidity" },
+            { label: "Vesu Lending", bp: vesuBps, amount: alloc.vesu, color: COLORS.vesu, desc: "Lending Pool" },
+            { label: "Buffer", bp: bufferBps, amount: alloc.buffer, color: COLORS.buffer, desc: "Vault Reserve" },
           ].map((item) => (
             <div key={item.label} className="flex items-center gap-3">
               <div
@@ -67,10 +87,12 @@ export function AllocationChart({
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-300">{item.label}</span>
                   <span className="text-sm font-mono font-medium text-white">
-                    {formatBps(item.bps)}
+                    {fmtPct(item.bp)}
                   </span>
                 </div>
-                <p className="text-[10px] text-gray-600">{item.desc}</p>
+                <p className="text-[10px] text-gray-600">
+                  {item.desc} · {formatWbtc(item.amount, 4)} wBTC
+                </p>
               </div>
             </div>
           ))}

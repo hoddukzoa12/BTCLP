@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
+    await req.json(); // consume body
     const ownerId = auth.userId;
 
     const privy = getPrivyWalletClient();

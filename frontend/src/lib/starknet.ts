@@ -41,6 +41,15 @@ export async function callContract(
 }
 
 /**
+ * Waits for a transaction to be confirmed on-chain (ACCEPTED_ON_L2).
+ * Call this after executeTransaction before invalidating queries.
+ */
+export async function waitForTx(txHash: string): Promise<void> {
+  const provider = getProvider();
+  await provider.waitForTransaction(txHash);
+}
+
+/**
  * Creates a Contract instance bound to the cached provider.
  */
 export function getContract(address: string, abi: Abi): Contract {

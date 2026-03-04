@@ -9,6 +9,8 @@ import { cairo, CallData } from "starknet";
 
 const vaultAddr = ADDRESSES.sepolia.vault;
 const wbtcAddr = ADDRESSES.sepolia.wbtc;
+const ekuboStratAddr = ADDRESSES.sepolia.ekuboStrategy;
+const vesuStratAddr = ADDRESSES.sepolia.vesuStrategy;
 
 // --- Helpers ---
 
@@ -79,6 +81,25 @@ export function useVault() {
   const { data: bufferBpsRaw } = useQuery({
     queryKey: ["vault", "buffer_bps"],
     queryFn: () => callContract(vaultAddr, "buffer_bps"),
+    refetchInterval: POLLING_INTERVAL,
+  });
+
+  // Actual wBTC balances for each contract (for allocation chart)
+  const { data: vaultBalanceRaw } = useQuery({
+    queryKey: ["wbtc", "balance_of", vaultAddr],
+    queryFn: () => callContract(wbtcAddr, "balance_of", [vaultAddr]),
+    refetchInterval: POLLING_INTERVAL,
+  });
+
+  const { data: ekuboBalanceRaw } = useQuery({
+    queryKey: ["wbtc", "balance_of", ekuboStratAddr],
+    queryFn: () => callContract(wbtcAddr, "balance_of", [ekuboStratAddr]),
+    refetchInterval: POLLING_INTERVAL,
+  });
+
+  const { data: vesuBalanceRaw } = useQuery({
+    queryKey: ["wbtc", "balance_of", vesuStratAddr],
+    queryFn: () => callContract(wbtcAddr, "balance_of", [vesuStratAddr]),
     refetchInterval: POLLING_INTERVAL,
   });
 
@@ -241,6 +262,20 @@ export function useVault() {
 
   const bufferBps = bufferBpsRaw ? parseNumber(bufferBpsRaw[0]) : 0;
 
+  // Actual wBTC balances per contract
+  const vaultBalance =
+    vaultBalanceRaw && vaultBalanceRaw.length >= 2
+      ? u256FromFelts(vaultBalanceRaw[0], vaultBalanceRaw[1])
+      : 0n;
+  const ekuboBalance =
+    ekuboBalanceRaw && ekuboBalanceRaw.length >= 2
+      ? u256FromFelts(ekuboBalanceRaw[0], ekuboBalanceRaw[1])
+      : 0n;
+  const vesuBalance =
+    vesuBalanceRaw && vesuBalanceRaw.length >= 2
+      ? u256FromFelts(vesuBalanceRaw[0], vesuBalanceRaw[1])
+      : 0n;
+
   // is_paused returns a Cairo bool enum: 0 = False, 1 = True
   const isPaused = isPausedRaw ? parseBigInt(isPausedRaw[0]) !== 0n : false;
 
@@ -274,6 +309,10 @@ export function useVault() {
     userAssetValue,
     maxWithdraw,
     maxRedeem,
+    // Actual wBTC balances per contract
+    vaultBalance,
+    ekuboBalance,
+    vesuBalance,
     // Write actions
     deposit,
     withdraw,

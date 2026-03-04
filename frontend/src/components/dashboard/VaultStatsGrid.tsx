@@ -79,9 +79,9 @@ export function VaultStatsGrid({
         delay={0}
       />
       <StatCard
-        label="Share Price"
+        label="NAV / Share"
         value={`${formatWbtc(sharePrice, 8)} wBTC`}
-        subValue="per bfVault share"
+        subValue="1 share = this amount of wBTC"
         icon={<TrendingUp className="w-5 h-5 text-vault-green" />}
         accent="vault-green"
         delay={50}
