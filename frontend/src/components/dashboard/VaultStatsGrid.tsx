@@ -19,6 +19,22 @@ interface StatCardProps {
   delay?: number;
 }
 
+const accentVia: Record<string, string> = {
+  "btc-orange": "via-btc-orange",
+  "btc-gold": "via-btc-gold",
+  "vault-green": "via-vault-green",
+  "vault-blue": "via-vault-blue",
+  "vault-red": "via-vault-red",
+};
+
+const accentBg: Record<string, string> = {
+  "btc-orange": "bg-btc-orange/10",
+  "btc-gold": "bg-btc-gold/10",
+  "vault-green": "bg-vault-green/10",
+  "vault-blue": "bg-vault-blue/10",
+  "vault-red": "bg-vault-red/10",
+};
+
 function StatCard({ label, value, subValue, icon, accent = "btc-orange", delay = 0 }: StatCardProps) {
   return (
     <div
@@ -27,7 +43,7 @@ function StatCard({ label, value, subValue, icon, accent = "btc-orange", delay =
     >
       {/* Subtle top accent line */}
       <div
-        className={`absolute top-0 left-4 right-4 h-px bg-gradient-to-r from-transparent via-${accent} to-transparent opacity-30`}
+        className={`absolute top-0 left-4 right-4 h-px bg-gradient-to-r from-transparent ${accentVia[accent] ?? "via-btc-orange"} to-transparent opacity-30`}
       />
 
       <div className="flex items-start justify-between">
@@ -42,7 +58,7 @@ function StatCard({ label, value, subValue, icon, accent = "btc-orange", delay =
             <p className="text-xs text-gray-500 font-mono">{subValue}</p>
           )}
         </div>
-        <div className={`p-2 rounded-lg bg-${accent}/10`}>
+        <div className={`p-2 rounded-lg ${accentBg[accent] ?? "bg-btc-orange/10"}`}>
           {icon}
         </div>
       </div>

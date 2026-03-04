@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # wBTC contract address on Sepolia (MockERC20 with public mint_to)
-WBTC_ADDR="0x0177e83c0a28698daf5f65cfd4923d75513eb8175fa76d110bb92133afb2d627"
+WBTC_ADDR="0x14cfad93c79be2f099b84748b7dbc9bbb7f81fccf4cba590711a6a8624c6291"
 
 RECIPIENT="${1:?Usage: $0 <RECIPIENT_ADDRESS> [AMOUNT_WBTC]}"
 AMOUNT_WBTC="${2:-1}"  # Default: 1 wBTC
