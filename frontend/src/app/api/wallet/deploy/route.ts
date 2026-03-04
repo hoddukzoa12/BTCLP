@@ -1,7 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CallData, CairoOption, CairoOptionVariant, CairoCustomEnum } from "starknet";
 import { verifyAuth } from "../../_lib/auth";
-import { getStarknetWallet, getReadyAccount, computeReadyAddress } from "../../_lib/ready";
+import { getReadyAccount, computeReadyAddress, buildReadyConstructor, verifyWalletOwnership, validateWalletId } from "../../_lib/ready";
+import { getRpcProvider } from "../../_lib/provider";
+
+/**
+ * Check if account is already deployed on-chain.
+ */
+async function isAccountDeployed(address: string): Promise<boolean> {
+  try {
+    const provider = getRpcProvider();
+    await provider.getNonceForAddress(address);
+    return true;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("Contract not found") || msg.includes("not found")) {
+      return false;
+    }
+    throw new Error(`RPC error checking deployment: ${msg}`);
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,32 +39,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    validateWalletId(walletId);
+
     const classHash = process.env.READY_CLASSHASH;
     if (!classHash) {
       return NextResponse.json(
-        { error: "READY_CLASSHASH not configured" },
+        { error: "Server configuration error" },
         { status: 500 }
       );
     }
 
-    // Verify the authenticated user owns this wallet
-    const { verifyWalletOwnership } = await import("../../_lib/ready");
-    await verifyWalletOwnership(walletId, auth.userId);
-
-    const { publicKey } = await getStarknetWallet(walletId);
+    // Verify the authenticated user owns this wallet (also returns wallet data)
+    const { publicKey } = await verifyWalletOwnership(walletId, auth.userId);
     const address = computeReadyAddress(publicKey);
+
+    // Idempotency: skip if already deployed
+    const deployed = await isAccountDeployed(address);
+    if (deployed) {
+      return NextResponse.json({
+        walletId,
+        address,
+        publicKey,
+        alreadyDeployed: true,
+      });
+    }
 
     const { account } = await getReadyAccount({
       walletId,
       publicKey,
     });
 
-    // Build constructor calldata matching Ready account's expected params
-    const signerEnum = new CairoCustomEnum({ Starknet: { pubkey: publicKey } });
-    const guardian = new CairoOption(CairoOptionVariant.None);
-    const constructorCalldata = CallData.compile({ owner: signerEnum, guardian });
+    const constructorCalldata = buildReadyConstructor(publicKey);
 
-    // Deploy account with proper constructor calldata
     const result = await account.deployAccount({
       classHash,
       constructorCalldata,
@@ -64,7 +87,7 @@ export async function POST(req: NextRequest) {
     const msg =
       error instanceof Error ? error.message : "Failed to deploy wallet";
     console.error("Error deploying Ready account:", msg);
-    if (msg.includes("does not belong")) {
+    if (msg.includes("does not belong") || msg.includes("Invalid walletId")) {
       return NextResponse.json({ error: msg }, { status: 403 });
     }
     return NextResponse.json({ error: msg }, { status: 500 });

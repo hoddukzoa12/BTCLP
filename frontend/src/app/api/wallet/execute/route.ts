@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  CallData,
-  CairoOption,
-  CairoOptionVariant,
-  CairoCustomEnum,
-} from "starknet";
+import { CallData } from "starknet";
 import { verifyAuth } from "../../_lib/auth";
 import {
-  getStarknetWallet,
   getReadyAccount,
   computeReadyAddress,
+  buildReadyConstructor,
+  verifyWalletOwnership,
+  validateWalletId,
 } from "../../_lib/ready";
-import { getRpcProvider } from "../../_lib/provider";
+import { getRpcProvider, getResourceBounds } from "../../_lib/provider";
 
 interface ContractCall {
   contractAddress: string;
@@ -21,7 +18,7 @@ interface ContractCall {
 
 /**
  * Check if a contract is deployed on-chain by querying its nonce.
- * Returns true if the contract exists, false otherwise.
+ * Throws on RPC errors (only returns false for "not found").
  */
 async function isAccountDeployed(address: string): Promise<boolean> {
   try {
@@ -33,9 +30,7 @@ async function isAccountDeployed(address: string): Promise<boolean> {
     if (msg.includes("Contract not found") || msg.includes("not found")) {
       return false;
     }
-    // Other errors (e.g., RPC failure) — assume not deployed to be safe
-    console.warn("[execute] getNonce check failed:", msg);
-    return false;
+    throw new Error(`RPC error checking deployment: ${msg}`);
   }
 }
 
@@ -79,11 +74,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify the authenticated user owns this wallet
-    const { verifyWalletOwnership } = await import("../../_lib/ready");
-    await verifyWalletOwnership(walletId, auth.userId);
+    validateWalletId(walletId);
 
-    const { publicKey } = await getStarknetWallet(walletId);
+    // Verify the authenticated user owns this wallet (also returns wallet data)
+    const { publicKey } = await verifyWalletOwnership(walletId, auth.userId);
     const address = computeReadyAddress(publicKey);
     const { account } = await getReadyAccount({
       walletId,
@@ -99,38 +93,15 @@ export async function POST(req: NextRequest) {
       const classHash = process.env.READY_CLASSHASH;
       if (!classHash) {
         return NextResponse.json(
-          { error: "READY_CLASSHASH not configured — cannot auto-deploy" },
+          { error: "Server configuration error" },
           { status: 500 }
         );
       }
 
-      const signerEnum = new CairoCustomEnum({
-        Starknet: { pubkey: publicKey },
-      });
-      const guardian = new CairoOption(CairoOptionVariant.None);
-      const constructorCalldata = CallData.compile({
-        owner: signerEnum,
-        guardian,
-      });
+      const constructorCalldata = buildReadyConstructor(publicKey);
 
       try {
-        // Fetch current gas prices from the network to set proper bounds.
-        // Hardcoded values break because Sepolia gas prices fluctuate widely.
-        const provider = getRpcProvider();
-        const block = await provider.getBlock("latest");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const blockAny = block as any;
-        const l1Price = BigInt(blockAny.l1_gas_price?.price_in_fri ?? "0x174876e800");
-        const l1DataPrice = BigInt(blockAny.l1_data_gas_price?.price_in_fri ?? "0x174876e800");
-        const l2Price = BigInt(blockAny.l2_gas_price?.price_in_fri ?? "0x174876e800");
-
-        // 3x multiplier for safety margin
-        const toHex = (n: bigint) => "0x" + n.toString(16);
-        const l1PriceHex = toHex(l1Price * 3n);
-        const l1DataPriceHex = toHex(l1DataPrice * 3n);
-        const l2PriceHex = toHex(l2Price * 3n);
-
-        console.log("[execute] Gas prices from block — l1:", l1Price.toString(), "l1_data:", l1DataPrice.toString(), "l2:", l2Price.toString());
+        const resourceBounds = await getResourceBounds();
 
         const deployResult = await account.deployAccount(
           {
@@ -139,35 +110,23 @@ export async function POST(req: NextRequest) {
             addressSalt: publicKey,
           },
           {
-            // Starknet 0.13.x requires l1_data_gas in resource_bounds.
-            // starknet.js v6 types don't include it yet, so we cast.
-            resourceBounds: {
-              l1_gas: { max_amount: "0x2710", max_price_per_unit: l1PriceHex },
-              l2_gas: { max_amount: "0x1000000", max_price_per_unit: l2PriceHex },
-              l1_data_gas: { max_amount: "0x2710", max_price_per_unit: l1DataPriceHex },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            } as any,
+            resourceBounds: resourceBounds as any,
           }
         );
-        console.log(
-          "[execute] Deploy tx:",
-          deployResult?.transaction_hash
-        );
+        console.log("[execute] Deploy tx:", deployResult?.transaction_hash);
 
-        // Wait for deploy to confirm before executing the actual transaction
         await account.waitForTransaction(
           deployResult.transaction_hash as string
         );
         console.log("[execute] Deploy confirmed");
         deployed = true;
       } catch (deployErr: unknown) {
-        console.error("[execute] Full deploy error:", deployErr);
         const deployMsg =
           deployErr instanceof Error
             ? deployErr.message
             : "Deploy failed";
 
-        // If the error indicates the account is already deployed, continue
         if (
           deployMsg.includes("already deployed") ||
           deployMsg.includes("CONTRACT_ALREADY_DEPLOYED")
@@ -177,9 +136,7 @@ export async function POST(req: NextRequest) {
         } else {
           console.error("[execute] Auto-deploy failed:", deployMsg);
           return NextResponse.json(
-            {
-              error: `Account not deployed and auto-deploy failed: ${deployMsg}`,
-            },
+            { error: "Auto-deploy failed" },
             { status: 500 }
           );
         }
@@ -210,25 +167,11 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // Fetch current gas prices for invoke tx resource bounds.
-    // starknet.js v6 fee estimation omits l1_data_gas, causing RPC errors
-    // on Starknet 0.14.x nodes. We provide explicit bounds instead.
-    const invokeProvider = getRpcProvider();
-    const invokeBlock = await invokeProvider.getBlock("latest");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ibAny = invokeBlock as any;
-    const il1Price = BigInt(ibAny.l1_gas_price?.price_in_fri ?? "0x174876e800");
-    const il1DataPrice = BigInt(ibAny.l1_data_gas_price?.price_in_fri ?? "0x174876e800");
-    const il2Price = BigInt(ibAny.l2_gas_price?.price_in_fri ?? "0x174876e800");
-    const iToHex = (n: bigint) => "0x" + n.toString(16);
+    const resourceBounds = await getResourceBounds();
 
     const result = (await account.execute(normalizedCalls, {
-      resourceBounds: {
-        l1_gas: { max_amount: "0x2710", max_price_per_unit: iToHex(il1Price * 3n) },
-        l2_gas: { max_amount: "0x1000000", max_price_per_unit: iToHex(il2Price * 3n) },
-        l1_data_gas: { max_amount: "0x2710", max_price_per_unit: iToHex(il1DataPrice * 3n) },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any,
+      resourceBounds: resourceBounds as any,
     })) as Record<string, unknown>;
 
     if (wait) {
@@ -253,7 +196,7 @@ export async function POST(req: NextRequest) {
         ? error.message
         : "Failed to execute transaction";
     console.error("[execute] Error:", msg);
-    if (msg.includes("does not belong")) {
+    if (msg.includes("does not belong") || msg.includes("Invalid walletId")) {
       return NextResponse.json({ error: msg }, { status: 403 });
     }
     return NextResponse.json({ error: msg }, { status: 500 });

@@ -12,7 +12,24 @@ import { getRpcProvider } from "./provider";
 import { RawSigner } from "./rawSigner";
 import { getPrivyWalletClient } from "./privyClient";
 
-function buildReadyConstructor(publicKey: string) {
+const WALLET_ID_RE = /^[a-zA-Z0-9_-]+$/;
+const HEX_RE = /^0x[0-9a-fA-F]+$/;
+
+/** Validate a Privy wallet ID to prevent URL injection. */
+export function validateWalletId(walletId: string): void {
+  if (!walletId || !WALLET_ID_RE.test(walletId)) {
+    throw new Error("Invalid walletId format");
+  }
+}
+
+/** Validate a Starknet hex hash string. */
+export function validateHex(value: string, fieldName: string): void {
+  if (!value || !HEX_RE.test(value)) {
+    throw new Error(`Invalid ${fieldName} format`);
+  }
+}
+
+export function buildReadyConstructor(publicKey: string) {
   const signerEnum = new CairoCustomEnum({ Starknet: { pubkey: publicKey } });
   const guardian = new CairoOption(CairoOptionVariant.None);
   return CallData.compile({ owner: signerEnum, guardian });
@@ -246,10 +263,20 @@ export async function getReadyAccount(opts: {
  * So we list all wallets for the user via `GET /v1/wallets?user_id=...` and
  * check if the requested walletId is in that list.
  */
+/**
+ * Wallet data returned from ownership verification.
+ * Contains the public_key needed by downstream callers,
+ * eliminating a second Privy API call to getStarknetWallet.
+ */
+export interface VerifiedWallet {
+  publicKey: string;
+  address?: string;
+}
+
 export async function verifyWalletOwnership(
   walletId: string,
   userId: string,
-): Promise<void> {
+): Promise<VerifiedWallet> {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID!;
   const appSecret = process.env.PRIVY_APP_SECRET!;
 
@@ -272,11 +299,19 @@ export async function verifyWalletOwnership(
 
   const json = await resp.json();
   const wallets = (json?.data as Record<string, unknown>[]) ?? [];
-  const match = wallets.some((w) => w.id === walletId);
+  const match = wallets.find((w) => w.id === walletId);
 
   if (!match) {
     throw new Error("Wallet does not belong to authenticated user");
   }
+
+  const publicKey =
+    (match.public_key as string) || (match.publicKey as string) || "";
+  if (!publicKey) {
+    throw new Error("Wallet missing Starknet public key");
+  }
+
+  return { publicKey, address: match.address as string | undefined };
 }
 
 /**

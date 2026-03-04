@@ -97,7 +97,7 @@ export function VaultStatsGrid({
       <StatCard
         label="Your Shares"
         value={isConnected ? `${formatWbtc(userShares)} bfVault` : "—"}
-        subValue={isConnected ? "Connect wallet to view" : undefined}
+        subValue={!isConnected ? "Connect wallet to view" : undefined}
         icon={<PiggyBank className="w-5 h-5 text-vault-blue" />}
         accent="vault-blue"
         delay={150}

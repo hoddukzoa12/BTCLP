@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAuth } from "../../_lib/auth";
-import { getStarknetWallet, computeReadyAddress, verifyWalletOwnership } from "../../_lib/ready";
+import { computeReadyAddress, verifyWalletOwnership, validateWalletId } from "../../_lib/ready";
 
 /**
  * POST /api/wallet/info
@@ -29,10 +29,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify the authenticated user owns this wallet
-    await verifyWalletOwnership(walletId, auth.userId);
+    validateWalletId(walletId);
 
-    const { publicKey } = await getStarknetWallet(walletId);
+    // Verify the authenticated user owns this wallet (also returns wallet data)
+    const { publicKey } = await verifyWalletOwnership(walletId, auth.userId);
     const address = computeReadyAddress(publicKey);
 
     return NextResponse.json({

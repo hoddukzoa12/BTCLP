@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAuth } from "../../_lib/auth";
-import { rawSign } from "../../_lib/ready";
+import { rawSign, verifyWalletOwnership, validateWalletId, validateHex } from "../../_lib/ready";
 
 /**
  * POST /api/wallet/sign
@@ -30,8 +30,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    validateWalletId(walletId);
+    validateHex(messageHash, "hash");
+
     // Verify the authenticated user owns this wallet
-    const { verifyWalletOwnership } = await import("../../_lib/ready");
     await verifyWalletOwnership(walletId, auth.userId);
 
     const signature = await rawSign(walletId, messageHash);
