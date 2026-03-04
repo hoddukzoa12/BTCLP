@@ -30,20 +30,27 @@ function getStorageKey(userId: string): string {
 }
 
 function loadWalletFromStorage(userId: string): WalletState {
-  if (typeof window === 'undefined') {
-    return { walletId: null, walletAddress: null, publicKey: null };
-  }
+  const empty: WalletState = { walletId: null, walletAddress: null, publicKey: null };
+  if (typeof window === 'undefined') return empty;
   try {
     const raw = localStorage.getItem(getStorageKey(userId));
-    if (!raw) return { walletId: null, walletAddress: null, publicKey: null };
+    if (!raw) return empty;
     const parsed = JSON.parse(raw) as WalletState;
+
+    // Validate: walletId must be a Privy wallet ID, not a hex address
+    if (parsed.walletId && parsed.walletId.startsWith('0x')) {
+      console.warn('[useAuth] Corrupted walletId (hex address) in localStorage — clearing');
+      localStorage.removeItem(getStorageKey(userId));
+      return empty;
+    }
+
     return {
       walletId: parsed.walletId ?? null,
       walletAddress: parsed.walletAddress ?? null,
       publicKey: parsed.publicKey ?? null,
     };
   } catch {
-    return { walletId: null, walletAddress: null, publicKey: null };
+    return empty;
   }
 }
 
@@ -52,10 +59,9 @@ function saveWalletToStorage(userId: string, wallet: WalletState): void {
   localStorage.setItem(getStorageKey(userId), JSON.stringify(wallet));
 }
 
-function clearWalletFromStorage(userId: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(getStorageKey(userId));
-}
+// Module-level guard: prevents multiple useAuth() instances from
+// triggering concurrent recovery calls to /api/wallet/create.
+let recoveryInFlight = false;
 
 export function useAuth() {
   const {
@@ -86,9 +92,73 @@ export function useAuth() {
     }
   }, [ready, authenticated, user?.id]);
 
+  // Server-side wallet recovery: if authenticated but no wallet, try to recover.
+  // Uses module-level guard so multiple useAuth() instances don't race.
+  useEffect(() => {
+    if (!ready || !authenticated || !user?.id) return;
+    if (wallet.walletId) return;
+    if (recoveryInFlight) return;
+
+    recoveryInFlight = true;
+    const userId = user.id;
+    console.log('[useAuth] No wallet in state — attempting server recovery');
+
+    getAccessToken()
+      .then((token) =>
+        fetch('/api/wallet/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ ownerId: userId }),
+        }),
+      )
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Recovery failed: ${res.status}`);
+        const data = (await res.json()) as CreateWalletResponse;
+        const recovered: WalletState = {
+          walletId: data.walletId,
+          walletAddress: data.walletAddress,
+          publicKey: data.publicKey,
+        };
+        setWallet(recovered);
+        saveWalletToStorage(userId, recovered);
+        console.log('[useAuth] Wallet recovered:', recovered.walletAddress);
+      })
+      .catch((e) => {
+        console.warn('[useAuth] Wallet recovery failed:', e);
+      })
+      .finally(() => {
+        recoveryInFlight = false;
+      });
+  }, [ready, authenticated, user?.id, wallet.walletId, getAccessToken]);
+
   const createWallet = useCallback(async (): Promise<CreateWalletResponse> => {
     if (!authenticated || !user?.id) {
       throw new Error('User must be authenticated to create a wallet');
+    }
+
+    // ── Guard: if in-memory state already has a valid wallet, reuse it ──
+    if (wallet.walletId && wallet.walletAddress) {
+      console.log('[useAuth] Reusing wallet from state:', wallet.walletAddress);
+      return {
+        walletId: wallet.walletId,
+        walletAddress: wallet.walletAddress,
+        publicKey: wallet.publicKey ?? '',
+      };
+    }
+
+    // ── Guard: check localStorage as well ──
+    const stored = loadWalletFromStorage(user.id);
+    if (stored.walletId && stored.walletAddress) {
+      console.log('[useAuth] Reusing wallet from localStorage:', stored.walletAddress);
+      setWallet(stored);
+      return {
+        walletId: stored.walletId,
+        walletAddress: stored.walletAddress,
+        publicKey: stored.publicKey ?? '',
+      };
     }
 
     const token = await getAccessToken();
@@ -117,7 +187,7 @@ export function useAuth() {
     saveWalletToStorage(user.id, newWallet);
 
     return data;
-  }, [authenticated, user?.id, getAccessToken]);
+  }, [authenticated, user?.id, wallet, getAccessToken]);
 
   const executeTransaction = useCallback(
     async (calls: TransactionCall[]): Promise<ExecuteTransactionResponse> => {
@@ -145,6 +215,19 @@ export function useAuth() {
 
         if (!response.ok) {
           const errorBody = await response.text();
+
+          // If the wallet has no valid auth keys, it's an embedded wallet
+          // that can't sign server-side. Clear it so recovery creates a
+          // proper server wallet on next attempt.
+          if (
+            response.status === 500 &&
+            errorBody.includes('authorization keys')
+          ) {
+            console.warn('[useAuth] Wallet auth key error — clearing stale wallet');
+            localStorage.removeItem(getStorageKey(user.id));
+            setWallet({ walletId: null, walletAddress: null, publicKey: null });
+          }
+
           throw new Error(
             `Failed to execute transaction: ${response.status} ${errorBody}`,
           );
@@ -159,12 +242,12 @@ export function useAuth() {
   );
 
   const logout = useCallback(async () => {
-    if (user?.id) {
-      clearWalletFromStorage(user.id);
-    }
+    // NOTE: We intentionally do NOT clear wallet from localStorage.
+    // The wallet is bound to the Privy userId, so the same user logging
+    // back in should see the same wallet. Only the in-memory state is reset.
     setWallet({ walletId: null, walletAddress: null, publicKey: null });
     await privyLogout();
-  }, [user?.id, privyLogout]);
+  }, [privyLogout]);
 
   return {
     // Privy core

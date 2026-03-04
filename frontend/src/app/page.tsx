@@ -7,6 +7,7 @@ import { VaultStatsGrid } from "@/components/dashboard/VaultStatsGrid";
 import { AllocationChart } from "@/components/dashboard/AllocationChart";
 import { DepositWithdrawPanel } from "@/components/deposit-withdraw/DepositWithdrawPanel";
 import { RebalancePanel } from "@/components/rebalance/RebalancePanel";
+import { FaucetButton } from "@/components/faucet/FaucetButton";
 import { BtcPriceChart } from "@/components/charts/BtcPriceChart";
 import { EventLog } from "@/components/events/EventLog";
 import { useVault } from "@/hooks/useVault";
@@ -60,6 +61,7 @@ export default function Dashboard() {
               bufferBps={vault.bufferBps}
               totalAssets={vault.totalAssets}
             />
+            <FaucetButton />
             <DepositWithdrawPanel />
           </div>
 

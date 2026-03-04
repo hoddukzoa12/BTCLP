@@ -36,7 +36,6 @@ export async function POST(req: NextRequest) {
     const { account } = await getReadyAccount({
       walletId,
       publicKey,
-      userJwt: auth.token,
     });
 
     // Build constructor calldata matching Ready account's expected params

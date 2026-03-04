@@ -30,9 +30,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const signature = await rawSign(walletId, messageHash, {
-      userJwt: auth.token,
-    });
+    const signature = await rawSign(walletId, messageHash);
 
     return NextResponse.json({ signature });
   } catch (error: unknown) {
