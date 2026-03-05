@@ -29,9 +29,11 @@
 
 ## Problem & Solution
 
-When BTC price moves outside a concentrated LP range on Ekubo, your capital earns **0% yield** while sitting idle. Existing solutions (like Re7) re-range the LP — crystallizing impermanent loss. We take a different approach.
+**strkBTC** is bringing native BTC to Starknet — unlocking real BTC-denominated DeFi for the first time. But without smart yield infrastructure, BTC holders face a familiar problem: concentrated LP positions on Ekubo earn **0% yield** the moment price drifts out of range. Existing solutions (like Re7) re-range the LP — crystallizing impermanent loss. Capital sits idle, and holders lose out.
 
-**BTCFi Strategy Vault** detects out-of-range conditions via Pragma oracle and **escapes** to Vesu lending (3-5% APY). When price returns to range, it **returns** to Ekubo LP automatically. All on-chain, all verifiable.
+**BTCFi Strategy Vault** solves this. It detects out-of-range conditions via Pragma oracle and **escapes** to Vesu lending (3-5% APY). When price returns to range, it **returns** to Ekubo LP automatically. All on-chain, all verifiable.
+
+> The current MVP uses wBTC on Sepolia testnet. **Phase 2 will integrate strkBTC natively** — making this vault a core yield layer for BTC on Starknet.
 
 | Scenario | Re7 / Others | Manual LP | **Our Vault** |
 |---|---|---|---|
