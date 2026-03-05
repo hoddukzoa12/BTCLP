@@ -252,6 +252,35 @@ journey
         Yield maximized again: 5: User
 ```
 
+### 1. Deposit
+
+User approves and deposits **1 wBTC** into the Vault contract. The Vault mints proportional shares representing the user's ownership of the pool.
+
+### 2. In-Range — Earning Yield
+
+While BTC price stays within the configured band (`$99,500 – $103,000`), the Manager allocates capital across two DeFi protocols:
+
+- **50%** → Ekubo concentrated LP — earns trading fees from the wBTC/USDC pair
+- **40%** → Vesu lending — earns lending APY on deposited wBTC
+- **10%** → Vault buffer — reserved for instant user withdrawals without unwinding positions
+
+### 3. Out-of-Range — Escape Mode
+
+When BTC price moves **outside** the LP range (e.g. spikes to $105k):
+
+- Ekubo LP stops earning fees — capital sits idle with **0% yield**
+- The Manager calls `escape()` to withdraw all capital from Ekubo
+- **100% of capital** moves to Vesu lending, which continues earning **3–5% APY** regardless of price
+- User funds keep generating yield instead of sitting idle
+
+### 4. Back-in-Range — Return Mode
+
+When BTC price **returns** to the LP range:
+
+- The Manager calls `return_to_lp()` to move capital back from Vesu to Ekubo
+- Concentrated LP position is re-established, maximizing yield again
+- The cycle repeats automatically as price fluctuates
+
 > *"When LP yield drops to zero, we automatically move to lending. When LP becomes profitable again, we move back."*
 
 ---
