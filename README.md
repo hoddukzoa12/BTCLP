@@ -38,7 +38,7 @@
 | Scenario | Re7 / Others | Manual LP | **Our Vault** |
 |---|---|---|---|
 | In Range | LP fee earning | LP fee earning | LP fee earning |
-| Out of Range | Re-range (IL crystallized) | 0% yield (idle) | **Auto Vesu lending** |
+| Out of Range | Re-range (IL crystallized) | 0% yield (idle) | **Auto Vesu lending (90%)** |
 | High Volatility | Repeated re-range = cumulative IL | 0% yield | **Stay in Vesu until stable** |
 | Return to Range | Already re-ranged | Manual re-entry | **Auto LP re-entry** |
 
@@ -66,8 +66,7 @@ sequenceDiagram
     P-->>M: $100,000
     M->>M: is_in_range() = true
     M->>V: execute_rebalance()
-    V->>E: deposit_liquidity(50%)
-    V->>Ve: supply(40%)
+    V->>E: deposit_liquidity(90%)
     Note over V: 10% buffer retained
 
     Note over U,P: 3. Price Exits Range → ESCAPE
@@ -77,7 +76,8 @@ sequenceDiagram
     V->>E: withdraw_liquidity(100%)
     E-->>V: wBTC returned
     V->>E: collect_fees()
-    V->>Ve: supply(withdrawn wBTC)
+    V->>Ve: supply(withdrawn wBTC, 90%)
+    Note over V: 10% buffer retained
     Note over Ve: Now earning 3-5% APY
 ```
 
@@ -239,14 +239,14 @@ journey
         Vault mints shares: 5: Vault
     section In-Range (Earning)
         Manager rebalances: 5: Manager
-        50% → Ekubo LP (fees): 5: Ekubo
-        40% → Vesu lending (APY): 4: Vesu
+        90% → Ekubo LP (fees): 5: Ekubo
         10% → buffer (instant withdrawal): 4: Vault
     section Out-of-Range (Escape)
         BTC price moves to $105k: 2: Oracle
         LP earns 0% — capital idle: 1: Ekubo
         Manager triggers ESCAPE: 5: Manager
-        All capital → Vesu (3-5% APY): 4: Vesu
+        90% capital → Vesu (3-5% APY): 4: Vesu
+        10% buffer retained in vault: 4: Vault
     section Back-in-Range (Return)
         BTC price returns to $100k: 5: Oracle
         Manager triggers RETURN: 5: Manager
@@ -262,8 +262,7 @@ User approves and deposits **1 wBTC** into the Vault contract. The Vault mints p
 
 While BTC price stays within the configured band (`$99,500 – $103,000`), the Manager allocates capital across two DeFi protocols:
 
-- **50%** → Ekubo concentrated LP — earns trading fees from the wBTC/USDC pair
-- **40%** → Vesu lending — earns lending APY on deposited wBTC
+- **90%** → Ekubo concentrated LP — earns trading fees from the wBTC/USDC pair
 - **10%** → Vault buffer — reserved for instant user withdrawals without unwinding positions
 
 ### 3. Out-of-Range — Escape Mode
@@ -272,7 +271,8 @@ When BTC price moves **outside** the LP range (e.g. spikes to $105k):
 
 - Ekubo LP stops earning fees — capital sits idle with **0% yield**
 - The Manager calls `escape()` to withdraw all capital from Ekubo
-- **100% of capital** moves to Vesu lending, which continues earning **3–5% APY** regardless of price
+- **90% of capital** moves to Vesu lending, which continues earning **3–5% APY** regardless of price
+- **10% buffer** remains in the vault for instant withdrawals
 - User funds keep generating yield instead of sitting idle
 
 ### 4. Back-in-Range — Return Mode
@@ -318,7 +318,7 @@ gantt
 
 | Phase | Timeline | Scope |
 |---|---|---|
-| **Phase 1: Hackathon MVP** | March 2026 | 1 vault (wBTC/USDC), binary LP/Lending switch, MockOracle, Sepolia testnet |
+| **Phase 1: Hackathon MVP** | March 2026 | 1 vault (wBTC/USDC), binary LP/Lending switch (90/10 buffer), MockOracle, Sepolia testnet |
 | **Phase 2: Production** | Q2 2026 | strkBTC support, keeper automation, Pragma mainnet oracle, fee structure |
 | **Phase 3: Quantitative** | Q3-Q4 2026 | GARCH/EGARCH volatility prediction, curator vaults, tokenized yield (y-strkBTC) |
 
